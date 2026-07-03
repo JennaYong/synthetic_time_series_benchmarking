@@ -43,13 +43,17 @@ prepare_training_config() {
 
   python3 - "${config_path}" "${trained_dir}" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
 config_path = Path(sys.argv[1])
 trained_dir = Path(sys.argv[2]).resolve()
 
-config = json.loads(config_path.read_text())
+config_text = config_path.read_text()
+# Upstream config may include trailing commas (invalid strict JSON).
+config_text = re.sub(r",(\s*[}\]])", r"\1", config_text)
+config = json.loads(config_text)
 config["train_config"]["output_directory"] = str(trained_dir)
 config["gen_config"]["output_directory"] = str(trained_dir)
 config["gen_config"]["ckpt_path"] = f"{trained_dir}/"
@@ -131,7 +135,12 @@ PY
   fi
 
   cp "${output_files[@]}" "${synthesis_dir}/"
+<<<<<<< Updated upstream
   echo "Saved synthetic ECG outputs to ${synthesis_dir}"
+=======
+  cp "${config_path}" "${synthesis_dir}/config_SSSD_ECG.json"
+  echo "Saved synthetic ECG outputs and config to ${synthesis_dir}"
+>>>>>>> Stashed changes
 }
 
 training_config="$(prepare_training_config)"
