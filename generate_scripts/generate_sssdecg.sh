@@ -135,12 +135,8 @@ PY
   fi
 
   cp "${output_files[@]}" "${synthesis_dir}/"
-<<<<<<< Updated upstream
-  echo "Saved synthetic ECG outputs to ${synthesis_dir}"
-=======
   cp "${config_path}" "${synthesis_dir}/config_SSSD_ECG.json"
   echo "Saved synthetic ECG outputs and config to ${synthesis_dir}"
->>>>>>> Stashed changes
 }
 
 training_config="$(prepare_training_config)"
