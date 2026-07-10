@@ -52,7 +52,6 @@ trained_dir = Path(sys.argv[2]).resolve()
 
 config_text = config_path.read_text()
 # Upstream config may include trailing commas (invalid strict JSON).
-config_text = re.sub(r",(\s*[}\]])", r"\1", config_text)
 config = json.loads(config_text)
 config["train_config"]["output_directory"] = str(trained_dir)
 config["gen_config"]["output_directory"] = str(trained_dir)
@@ -94,8 +93,7 @@ sssd_inference.diffusion_hyperparams = calc_diffusion_hyperparams(**config["diff
 
 sssd_inference.generate(
     **config["gen_config"],
-    ckpt_iter="max",
-    num_samples=400,
+    ckpt_iter="max"
 )
 PY
   )
