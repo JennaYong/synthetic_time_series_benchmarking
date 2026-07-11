@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --account=def-chenh
-#SBATCH --gpus-per-node=nvidia_h100_80gb_hbm3_2g.20gb:2
+#SBATCH --gpus-per-node=nvidia_h100_80gb_hbm3_2g.20gb:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
