@@ -5,6 +5,7 @@ This repo implements the unified synthetic time-series data benchmarking framewo
 More datasets to come...
 ### Available Models
 ✅ SSSD-ECG \
+✅ TTS-GAN \
 More models to come...
 ### Evaluation - Developing...
 
@@ -67,7 +68,7 @@ If no arguments are provided, the script will print available models.
 ### Step 3: Relocate Dataset for Model Usage
 Place the extracted dataset under `Dataset/` at the project root, then run
 ```
-./relocate_scripts/relocate_<model>>.sh
+./relocate_scripts/relocate_<model>.sh
 ```
 
 ### Step 4: Sync Local Setup with Remote Server
@@ -78,13 +79,29 @@ To sync local setup with remote server, run
 `<destination>` is the full path (`userid@remote-server:path_to_dest`) to the target location on the remote server. 
 
 ### Step 5: Synthesis Generation on Remote Server
-To train the model and generate synthetic data with it, SSH to the remote server and submit the job via
+To train the model and generate synthetic data with it, SSH to the remote server and run
 ```
-sbatch ./job.sh <model>
+./job.sh <model>
 ```
-`job.sh` will handle job details and computing resource allocation, so make sure to double-check before submitting a job. For SSSD-ECG, it runs `./generate_scripts/generate_sssdecg.sh`. The generated synthesis will be stored in `synthesis/SSSD-ECG/{date}` where `date` is the execution timestamp. 
+Run `job.sh` **directly** — do NOT use `sbatch ./job.sh <model>`. SBATCH `--time` headers are static (parsed before the script runs), so `job.sh` self-submits: it picks a per-model wall-time and submits itself via `sbatch`. Running it under `sbatch` yourself bypasses this and falls back to the static 24h header time.
 
-**Important: Relocate to the root directory (where `job.sh` is located) before job submission to ensure relative paths will work as expected**
+Per-model wall-time:
+
+| Model    | `--time` |
+|----------|----------|
+| sssd-ecg | 24:00:00 |
+| tts-gan  | 10:00:00 |
+
+To override the wall-time manually, submit explicitly: `sbatch --time=<HH:MM:SS> job.sh <model>`.
+
+`job.sh` handles job details and computing resource allocation, so double-check before submitting. For SSSD-ECG it runs `./generate_scripts/generate_sssdecg.sh`; for TTS-GAN, `./generate_scripts/generate_ttsgan.sh`. The generated synthesis is stored in `synthesis/<MODEL>/{date}` where `date` is the execution timestamp.
+
+TTS-GAN trains one model per activity class; select it via an environment variable (default `Running`):
+```
+TTS_GAN_CLASS=Jumping ./job.sh tts-gan
+```
+
+**Important: cd to the root directory (where `job.sh` is located) before submission so relative paths resolve correctly.**
 
 ### Step 6: Acquire Generated Synthesis from Remote Server
 To acquire the generated synthetic data from remote server to local, run 

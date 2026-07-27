@@ -58,18 +58,28 @@ import sys
 from pathlib import Path
 
 config_path = Path(sys.argv[1])
-dest_dir = sys.argv[2].rstrip("/") + "/"
 
 config_text = config_path.read_text()
 config_text = re.sub(r",(\s*[}\]])", r"\1", config_text)
 config = json.loads(config_text)
-config["gen_config"]["data_path"] = dest_dir
+# Use a machine-independent relative path: inference runs with its cwd set to
+# the dir holding the .npy files, so "./" resolves correctly on any machine.
+# (generate_sssdecg.sh overrides this with the absolute nibi path at job time.)
+config["gen_config"]["data_path"] = "./"
 config["gen_config"]["num_samples"] = 400
 config_path.write_text(json.dumps(config, indent=4) + "\n")
 PY
 
 perl -pi -e "s/labels = np\.load\('ptbxl_test_labels\.npy'\)/labels = np.load(data_path + 'ptbxl_test_labels.npy')/" "${inference_py}"
 
+# Upstream bug: the batch shape is hardcoded to num_samples (400), but the last
+# batch is labels[2000:], which holds the remainder (203 for PTB-XL's 2203-row
+# test set). That mismatch crashes inference on the final batch with
+# "size of tensor a (400) must match the size of tensor b (203)". Use the actual
+# per-batch label count instead.
+perl -pi -e "s/sampling_label\(net, \(num_samples,8,1000\)/sampling_label(net, (len(label),8,1000)/" "${inference_py}"
+
 echo "Relocated PTB-XL dataset to ${dest_dir}"
 echo "Updated ${default_config} with gen_config.data_path"
 echo "Updated ${inference_py} to load labels from data_path"
+echo "Updated ${inference_py} to size each batch by its actual label count"

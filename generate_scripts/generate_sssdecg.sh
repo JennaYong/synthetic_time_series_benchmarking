@@ -41,7 +41,7 @@ prepare_training_config() {
   mkdir -p "${trained_dir}"
   cp "${default_config}" "${config_path}"
 
-  python3 - "${config_path}" "${trained_dir}" <<'PY'
+  python3 - "${config_path}" "${trained_dir}" "${sssd_src_dir}" <<'PY'
 import json
 import re
 import sys
@@ -49,13 +49,19 @@ from pathlib import Path
 
 config_path = Path(sys.argv[1])
 trained_dir = Path(sys.argv[2]).resolve()
+sssd_src_dir = Path(sys.argv[3]).resolve()
 
 config_text = config_path.read_text()
 # Upstream config may include trailing commas (invalid strict JSON).
+config_text = re.sub(r",(\s*[}\]])", r"\1", config_text)
 config = json.loads(config_text)
 config["train_config"]["output_directory"] = str(trained_dir)
 config["gen_config"]["output_directory"] = str(trained_dir)
 config["gen_config"]["ckpt_path"] = f"{trained_dir}/"
+# data_path must point to wherever this job actually runs (the nibi src dir),
+# not whatever absolute path relocate baked in on another machine. inference.py
+# does data_path + 'ptbxl_test_labels.npy', so keep the trailing slash.
+config["gen_config"]["data_path"] = str(sssd_src_dir) + "/"
 config_path.write_text(json.dumps(config, indent=4) + "\n")
 PY
 
