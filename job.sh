@@ -31,7 +31,11 @@ DATASET="${2:-}"
 # generate_scripts/generate_ttsgan.sh); the optional positional arg just sets
 # it, so both `TTS_GAN_DATASET=ptbxl ./job.sh tts-gan` and
 # `./job.sh tts-gan ptbxl` work.
-if [[ "${MODEL}" == "tts-gan" && -n "${DATASET}" ]]; then
+if [[ -n "${DATASET}" ]]; then
+  if [[ "${MODEL}" != "tts-gan" ]]; then
+    echo "Error: ${MODEL} takes no dataset argument (got '${DATASET}')" >&2
+    usage
+  fi
   export TTS_GAN_DATASET="${DATASET}"
 fi
 

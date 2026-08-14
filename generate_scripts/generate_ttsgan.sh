@@ -72,9 +72,12 @@ if [[ "${DATASET}" == "unimib" ]]; then
     exit 1
   fi
 else
-  # ptbxl: npys and adapter code are copied in by relocate_ttsgan_ptbxl.sh
+  # ptbxl: npys and adapter code are copied in by relocate_ttsgan_ptbxl.sh.
+  # All three splits are required: train_GAN.py builds the test set at startup
+  # too, so a missing test npy would crash after the job has already started.
   for f in ptbxl/ptbxl_train_data.npy ptbxl/ptbxl_train_labels.npy \
            ptbxl/ptbxl_validation_data.npy ptbxl/ptbxl_validation_labels.npy \
+           ptbxl/ptbxl_test_data.npy ptbxl/ptbxl_test_labels.npy \
            ptbxl_dataLoader.py train_ptbxl_GAN.py; do
     if [[ ! -e "${model_repo_dir}/${f}" ]]; then
       echo "Error: ${model_repo_dir}/${f} not found." >&2
