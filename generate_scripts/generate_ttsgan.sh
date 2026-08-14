@@ -6,9 +6,40 @@ MODEL_BASE_DIR="${PROJECT_DIR}/model"
 
 # Configurable via environment variables at sbatch time, e.g.:
 #   TTS_GAN_CLASS=Jumping TTS_GAN_MAX_ITER=1000 sbatch job.sh tts-gan
-CLASS_NAME="${TTS_GAN_CLASS:-Running}"
+#   TTS_GAN_DATASET=ptbxl TTS_GAN_CLASS=MI ./job.sh tts-gan ptbxl
+# Datasets:
+#   unimib (default) - original TTS-GAN motion data, classes e.g. Running/Jumping
+#   ptbxl            - PTB-XL 12-lead ECG, classes NORM/MI/STTC/CD/HYP
+#                      (superclass filtering; see preprocess/ttsgan/)
+DATASET="${TTS_GAN_DATASET:-unimib}"
 MAX_ITER="${TTS_GAN_MAX_ITER:-500000}"
 NUM_SAMPLES="${TTS_GAN_NUM_SAMPLES:-1000}"
+
+case "${DATASET}" in
+  unimib)
+    CLASS_NAME="${TTS_GAN_CLASS:-Running}"
+    EXP_NAME="${CLASS_NAME}"
+    TRAIN_ENTRY="train_GAN.py"
+    OUTPUT_PREFIX="ttsgan_$(echo "${CLASS_NAME}" | tr '[:upper:]' '[:lower:]')"
+    ;;
+  ptbxl)
+    CLASS_NAME="${TTS_GAN_CLASS:-NORM}"
+    case "${CLASS_NAME}" in
+      NORM|MI|STTC|CD|HYP) ;;
+      *)
+        echo "Error: for ptbxl, TTS_GAN_CLASS must be one of NORM MI STTC CD HYP (got ${CLASS_NAME})" >&2
+        exit 1
+        ;;
+    esac
+    EXP_NAME="ptbxl_${CLASS_NAME}"
+    TRAIN_ENTRY="train_ptbxl_GAN.py"
+    OUTPUT_PREFIX="ttsgan_ptbxl_$(echo "${CLASS_NAME}" | tr '[:upper:]' '[:lower:]')"
+    ;;
+  *)
+    echo "Error: unknown TTS_GAN_DATASET '${DATASET}' (expected unimib or ptbxl)" >&2
+    exit 1
+    ;;
+esac
 
 model_repo_dir=""
 training_date="$(date +%Y-%m-%d)"
@@ -33,11 +64,24 @@ fi
 #    dataLoader's runtime download from Dropbox would fail; the zip must
 #    already be in the repo dir. Run ./relocate_scripts/relocate_ttsgan.sh or
 #    wget it on a login node.)
-if [[ ! -f "${model_repo_dir}/UniMiB-SHAR.zip" && ! -d "${model_repo_dir}/UniMiB-SHAR" ]]; then
-  echo "Error: UniMiB dataset not found in ${model_repo_dir}." >&2
-  echo "Place UniMiB-SHAR.zip there first (compute nodes cannot download it):" >&2
-  echo "  wget -O ${model_repo_dir}/UniMiB-SHAR.zip https://www.dropbox.com/s/raw/x2fpfqj0bpf8ep6/UniMiB-SHAR.zip" >&2
-  exit 1
+if [[ "${DATASET}" == "unimib" ]]; then
+  if [[ ! -f "${model_repo_dir}/UniMiB-SHAR.zip" && ! -d "${model_repo_dir}/UniMiB-SHAR" ]]; then
+    echo "Error: UniMiB dataset not found in ${model_repo_dir}." >&2
+    echo "Place UniMiB-SHAR.zip there first (compute nodes cannot download it):" >&2
+    echo "  wget -O ${model_repo_dir}/UniMiB-SHAR.zip https://www.dropbox.com/s/raw/x2fpfqj0bpf8ep6/UniMiB-SHAR.zip" >&2
+    exit 1
+  fi
+else
+  # ptbxl: npys and adapter code are copied in by relocate_ttsgan_ptbxl.sh
+  for f in ptbxl/ptbxl_train_data.npy ptbxl/ptbxl_train_labels.npy \
+           ptbxl/ptbxl_validation_data.npy ptbxl/ptbxl_validation_labels.npy \
+           ptbxl_dataLoader.py train_ptbxl_GAN.py; do
+    if [[ ! -e "${model_repo_dir}/${f}" ]]; then
+      echo "Error: ${model_repo_dir}/${f} not found." >&2
+      echo "Run ./relocate_scripts/relocate_ttsgan_ptbxl.sh locally and re-sync." >&2
+      exit 1
+    fi
+  done
 fi
 
 # 3. Install python dependencies into the active venv (offline, from the
@@ -83,17 +127,17 @@ patch_sources() {
 
 # 4. Train
 run_training() {
-  echo "Training TTS-GAN (class=${CLASS_NAME}, max_iter=${MAX_ITER})"
+  echo "Training TTS-GAN (dataset=${DATASET}, class=${CLASS_NAME}, max_iter=${MAX_ITER})"
   (
     cd "${model_repo_dir}"
-    python train_GAN.py \
+    python "${TRAIN_ENTRY}" \
       -gen_bs 16 \
       -dis_bs 16 \
       --dist-url 'tcp://localhost:4321' \
       --dist-backend 'nccl' \
       --world-size 1 \
       --rank 0 \
-      --dataset UniMiB \
+      --dataset "$([[ "${DATASET}" == "unimib" ]] && echo UniMiB || echo "${DATASET}")" \
       --bottom_width 8 \
       --max_iter "${MAX_ITER}" \
       --img_size 32 \
@@ -129,17 +173,17 @@ run_training() {
       --ema 0.9999 \
       --diff_aug translation,cutout,color \
       --class_name "${CLASS_NAME}" \
-      --exp_name "${CLASS_NAME}"
+      --exp_name "${EXP_NAME}"
   )
 }
 
 # 5. Generate synthetic samples from the newest checkpoint and collect outputs
 collect_synthesis_outputs() {
   local latest_ckpt
-  latest_ckpt="$(ls -t "${model_repo_dir}/logs/${CLASS_NAME}"_*/Model/checkpoint 2>/dev/null | head -1)"
+  latest_ckpt="$(ls -t "${model_repo_dir}/logs/${EXP_NAME}"_*/Model/checkpoint 2>/dev/null | head -1)"
 
   if [[ -z "${latest_ckpt}" ]]; then
-    echo "Error: no checkpoint found under ${model_repo_dir}/logs/${CLASS_NAME}_*/Model/" >&2
+    echo "Error: no checkpoint found under ${model_repo_dir}/logs/${EXP_NAME}_*/Model/" >&2
     exit 1
   fi
 
@@ -148,7 +192,7 @@ collect_synthesis_outputs() {
 
   (
     cd "${model_repo_dir}"
-    python3 - "${latest_ckpt}" "${synthesis_dir}" "${CLASS_NAME}" "${NUM_SAMPLES}" <<'PY'
+    python3 - "${latest_ckpt}" "${synthesis_dir}" "${CLASS_NAME}" "${NUM_SAMPLES}" "${DATASET}" "${OUTPUT_PREFIX}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -161,22 +205,43 @@ ckpt_path = Path(sys.argv[1])
 synthesis_dir = Path(sys.argv[2])
 class_name = sys.argv[3]
 num_samples = int(sys.argv[4])
+dataset = sys.argv[5]
+output_prefix = sys.argv[6]
 
-# Must match the training-time instantiation in train_GAN.py (defaults)
-gen_net = Generator()
+# Must match the training-time instantiation (train_GAN.py defaults for
+# UniMiB; train_ptbxl_GAN.py dimensions for PTB-XL)
+if dataset == "ptbxl":
+    gen_net = Generator(seq_len=1000, channels=12)
+else:
+    gen_net = Generator()
 checkpoint = torch.load(ckpt_path, map_location="cpu")
 gen_net.load_state_dict(checkpoint["gen_state_dict"])
 gen_net.eval()
 
+# Chunked generation: a single 1000-sample batch through the seq_len=1000
+# attention would need tens of GB; identical output, bounded memory.
 z = torch.FloatTensor(np.random.normal(0, 1, (num_samples, 100)))
+chunks = []
 with torch.no_grad():
-    synthetic = gen_net(z).numpy()
+    for start in range(0, num_samples, 50):
+        chunks.append(gen_net(z[start:start + 50]).numpy())
+synthetic = np.concatenate(chunks, axis=0)
 
-output_path = synthesis_dir / f"ttsgan_{class_name.lower()}_samples.npy"
+output_path = synthesis_dir / f"{output_prefix}_samples.npy"
 np.save(output_path, synthetic)
 
-meta_path = synthesis_dir / f"ttsgan_{class_name.lower()}_config.txt"
+if dataset == "ptbxl":
+    # One-hot superclass labels (NORM,MI,STTC,CD,HYP) for downstream evaluation
+    from ptbxl_dataLoader import SUPERCLASSES
+    labels = np.zeros((num_samples, len(SUPERCLASSES)), dtype=np.float32)
+    labels[:, SUPERCLASSES.index(class_name)] = 1.0
+    labels_path = synthesis_dir / f"{output_prefix}_labels.npy"
+    np.save(labels_path, labels)
+    print(f"Saved {labels.shape} one-hot superclass labels to {labels_path}")
+
+meta_path = synthesis_dir / f"{output_prefix}_config.txt"
 meta_path.write_text(
+    f"Dataset: {dataset}\n"
     f"Class: {class_name}\n"
     f"Checkpoint: {ckpt_path}\n"
     f"Epoch: {checkpoint['epoch']}\n"
@@ -188,7 +253,7 @@ print(f"Saved {synthetic.shape} synthetic samples to {output_path}")
 PY
   )
 
-  cp "${latest_ckpt}" "${synthesis_dir}/${CLASS_NAME}_checkpoint"
+  cp "${latest_ckpt}" "${synthesis_dir}/${EXP_NAME}_checkpoint"
   echo "Saved synthetic TTS-GAN outputs to ${synthesis_dir}"
 }
 

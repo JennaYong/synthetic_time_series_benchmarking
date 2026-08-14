@@ -18,15 +18,19 @@ synthetic_time_series_benchmarking/
       |--requirements.txt   # Evironment dependencies
       |--src/               # model source code
 |
-|--preprocess/              # Data preprocessing methods
 |--evaluation/              # Evaluation methods
 |--synthesis/               # Generated data stored in .npy format. Not tracked by git
 |--results/                 # Evaluation results. Not tracked by git. Not tracked by git
 |
+|--preprocess/              # Data preprocessing methods
+|   |--ttsgan/              # PTB-XL adapter for TTS-GAN (label mapping + dataset + driver)
 |--generate_scripts/        # Model-specific training and generation scripts
 |   |--generate_sssdecg.sh
+|   |--generate_ttsgan.sh
 |--relocate_scripts/        # Model-specific dataset relocation scripts
 |   |--relocate_sssdecg.sh
+|   |--relocate_ttsgan.sh         # UniMiB motion data
+|   |--relocate_ttsgan_ptbxl.sh   # PTB-XL ECG data
 |
 |--load_model.sh            # Download specified model to model/
 |--evaluate.sh              # Evaluation script
@@ -70,6 +74,9 @@ Place the extracted dataset under `Dataset/` at the project root, then run
 ```
 ./relocate_scripts/relocate_<model>.sh
 ```
+For TTS-GAN there are two relocate scripts, one per dataset:
+- `relocate_ttsgan.sh` — UniMiB motion data (copies `UniMiB-SHAR.zip` into the model dir)
+- `relocate_ttsgan_ptbxl.sh` — PTB-XL ECG data (copies the six `ptbxl_*.npy` files into `model/tts-gan/ptbxl/` and the adapter code from `preprocess/ttsgan/` into the model dir; re-run it after editing the adapters)
 
 ### Step 4: Sync Local Setup with Remote Server
 To sync local setup with remote server, run
@@ -81,25 +88,40 @@ To sync local setup with remote server, run
 ### Step 5: Synthesis Generation on Remote Server
 To train the model and generate synthetic data with it, SSH to the remote server and run
 ```
-./job.sh <model>
+./job.sh <model> [dataset]
 ```
 Run `job.sh` **directly** — do NOT use `sbatch ./job.sh <model>`. SBATCH `--time` headers are static (parsed before the script runs), so `job.sh` self-submits: it picks a per-model wall-time and submits itself via `sbatch`. Running it under `sbatch` yourself bypasses this and falls back to the static 24h header time.
 
 Per-model wall-time:
 
-| Model    | `--time` |
-|----------|----------|
-| sssd-ecg | 24:00:00 |
-| tts-gan  | 10:00:00 |
+| Model    | Dataset | `--time` |
+|----------|---------|----------|
+| sssd-ecg | ptbxl   | 24:00:00 |
+| tts-gan  | unimib  | 10:00:00 |
+| tts-gan  | ptbxl   | 24:00:00 |
 
 To override the wall-time manually, submit explicitly: `sbatch --time=<HH:MM:SS> job.sh <model>`.
 
 `job.sh` handles job details and computing resource allocation, so double-check before submitting. For SSSD-ECG it runs `./generate_scripts/generate_sssdecg.sh`; for TTS-GAN, `./generate_scripts/generate_ttsgan.sh`. The generated synthesis is stored in `synthesis/<MODEL>/{date}` where `date` is the execution timestamp.
 
-TTS-GAN trains one model per activity class; select it via an environment variable (default `Running`):
+TTS-GAN trains one unconditional model per class; select dataset and class via arguments/environment variables:
 ```
+# UniMiB motion data (default). Classes: Running (default), Jumping, ...
 TTS_GAN_CLASS=Jumping ./job.sh tts-gan
+
+# PTB-XL ECG. Classes are the 5 diagnostic superclasses: NORM (default), MI, STTC, CD, HYP
+TTS_GAN_CLASS=MI ./job.sh tts-gan ptbxl
 ```
+PTB-XL specifics (see `preprocess/ttsgan/` for details): records are filtered by
+diagnostic superclass derived from the 71-dim multi-hot SCP-statement labels
+(alphabetical column order, verified against `ptbxl_database.csv`). Optional env vars:
+- `TTS_GAN_PTBXL_LABEL_MODE`: `any` (default; record contains the class) or `exclusive` (record has exactly that one superclass)
+- `TTS_GAN_PTBXL_NORMALIZE`: `none` (default; keeps the SSSD-ECG global standardization so outputs are cross-model comparable) or `per_sample` (UniMiB-style per-record z-norm)
+- `TTS_GAN_PTBXL_PATCH_SIZE`: discriminator patch size, must divide 1000 (default 25)
+
+Outputs per run: `ttsgan_ptbxl_<class>_samples.npy` with shape `(N, 12, 1, 1000)`,
+`ttsgan_ptbxl_<class>_labels.npy` with one-hot superclass rows `(N, 5)` in the
+order `NORM, MI, STTC, CD, HYP`, plus the checkpoint and a config txt.
 
 **Important: cd to the root directory (where `job.sh` is located) before submission so relative paths resolve correctly.**
 

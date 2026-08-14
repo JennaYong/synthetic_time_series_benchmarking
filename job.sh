@@ -14,16 +14,26 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $(basename "$0") <model>"
-  echo "  model: model name (e.g. sssd-ecg)"
+  echo "Usage: $(basename "$0") <model> [dataset]"
+  echo "  model:   model name (sssd-ecg | tts-gan)"
+  echo "  dataset: optional dataset override (tts-gan: unimib | ptbxl; default unimib)"
   exit 1
 }
 
-if [[ $# -ne 1 ]]; then
+if [[ $# -lt 1 || $# -gt 2 ]]; then
   usage
 fi
 
 MODEL="$1"
+DATASET="${2:-}"
+
+# tts-gan reads its dataset choice from TTS_GAN_DATASET (see
+# generate_scripts/generate_ttsgan.sh); the optional positional arg just sets
+# it, so both `TTS_GAN_DATASET=ptbxl ./job.sh tts-gan` and
+# `./job.sh tts-gan ptbxl` work.
+if [[ "${MODEL}" == "tts-gan" && -n "${DATASET}" ]]; then
+  export TTS_GAN_DATASET="${DATASET}"
+fi
 
 # Per-model wall-time. SBATCH headers are static (parsed before the script
 # runs), so we can't branch on ${MODEL} inside them. Instead: when run directly
@@ -36,15 +46,24 @@ MODEL="$1"
 if [[ -z "${SLURM_JOB_ID:-}" ]]; then
   case "${MODEL}" in
     sssd-ecg) TIME_LIMIT="24:00:00" ;;
-    tts-gan)  TIME_LIMIT="10:00:00" ;;
+    tts-gan)
+      # PTB-XL sequences are ~7x longer than UniMiB (1000 vs 150 steps) and the
+      # generator attention cost grows quadratically, so give those runs longer.
+      if [[ "${TTS_GAN_DATASET:-unimib}" == "ptbxl" ]]; then
+        TIME_LIMIT="24:00:00"
+      else
+        TIME_LIMIT="10:00:00"
+      fi
+      ;;
     *)
       echo "Unknown model: ${MODEL}" >&2
       usage
       ;;
   esac
-  echo "Submitting ${MODEL} with --time=${TIME_LIMIT}"
-  # --export=ALL forwards the current environment (e.g. TTS_GAN_CLASS) into the
-  # submitted job so per-model options set on the command line still apply.
+  echo "Submitting ${MODEL}${TTS_GAN_DATASET:+ (dataset=${TTS_GAN_DATASET})} with --time=${TIME_LIMIT}"
+  # --export=ALL forwards the current environment (e.g. TTS_GAN_CLASS,
+  # TTS_GAN_DATASET) into the submitted job so per-model options set on the
+  # command line still apply.
   exec sbatch --time="${TIME_LIMIT}" --export=ALL "${BASH_SOURCE[0]}" "${MODEL}"
 fi
 
