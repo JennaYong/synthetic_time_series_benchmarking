@@ -35,7 +35,12 @@ sync_local_to_remote() {
   done
 
   echo "Syncing local to remote: ${REMOTE}"
-  scp -r \
+  # Use rsync (incremental) and skip nested git metadata and macOS junk.
+  # Excluding .git avoids "Permission denied" on read-only git pack objects
+  # that already exist on the remote, and keeps the transfer small.
+  rsync -av \
+    --exclude='.git' \
+    --exclude='.DS_Store' \
     "${SCRIPT_DIR}/generate_scripts" \
     "${SCRIPT_DIR}/job.sh" \
     "${SCRIPT_DIR}/model" \
@@ -47,7 +52,10 @@ sync_remote_to_local() {
 
   echo "Syncing remote to local: ${remote_synthesis} -> ${SCRIPT_DIR}/synthesis/"
   mkdir -p "${SCRIPT_DIR}/synthesis"
-  scp -r "${remote_synthesis}/" "${SCRIPT_DIR}/synthesis/"
+  # rsync with a trailing slash on the source copies the *contents* of the
+  # remote synthesis/ into the local synthesis/ (no extra nested level, which
+  # scp -r would create). --exclude skips macOS junk.
+  rsync -av --exclude='.DS_Store' "${remote_synthesis}/" "${SCRIPT_DIR}/synthesis/"
 }
 
 case "${MODE}" in

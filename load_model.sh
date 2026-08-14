@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: $(basename "$0") <model>"
-  echo "Available models: sssd-ecg"
+  echo "Available models: sssd-ecg, tts-gan"
   exit 1
 }
 
@@ -19,6 +19,10 @@ case "${MODEL}" in
   sssd-ecg)
     MODEL_DIR="${MODEL_BASE_DIR}/SSSD-ECG"
     MODEL_REPO="https://github.com/AI4HealthUOL/SSSD-ECG.git"
+    ;;
+  tts-gan)
+    MODEL_DIR="${MODEL_BASE_DIR}/tts-gan"
+    MODEL_REPO="https://github.com/imics-lab/tts-gan.git"
     ;;
   *)
     echo "Unknown model: ${MODEL}" >&2

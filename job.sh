@@ -4,6 +4,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
+# ^ Fallback wall-time only. The real per-model limit is set at submit time by
+#   the self-submit block below (sssd-ecg=24h, tts-gan=10h). A command-line
+#   --time always overrides both.
 #SBATCH --job-name=sssd_benchmark
 #SBATCH --output=logs/job-%j.out
 #SBATCH --error=logs/job-%j.err
@@ -21,6 +24,29 @@ if [[ $# -ne 1 ]]; then
 fi
 
 MODEL="$1"
+
+# Per-model wall-time. SBATCH headers are static (parsed before the script
+# runs), so we can't branch on ${MODEL} inside them. Instead: when run directly
+# (not yet under Slurm), pick the right --time for the model and submit
+# ourselves. When the submitted job re-runs this file, SLURM_JOB_ID is set and
+# we skip straight to the work below.
+#
+# Usage:  ./job.sh <model>       (NOT `sbatch job.sh <model>`, which would use
+#                                 the fallback header time instead of per-model)
+if [[ -z "${SLURM_JOB_ID:-}" ]]; then
+  case "${MODEL}" in
+    sssd-ecg) TIME_LIMIT="24:00:00" ;;
+    tts-gan)  TIME_LIMIT="10:00:00" ;;
+    *)
+      echo "Unknown model: ${MODEL}" >&2
+      usage
+      ;;
+  esac
+  echo "Submitting ${MODEL} with --time=${TIME_LIMIT}"
+  # --export=ALL forwards the current environment (e.g. TTS_GAN_CLASS) into the
+  # submitted job so per-model options set on the command line still apply.
+  exec sbatch --time="${TIME_LIMIT}" --export=ALL "${BASH_SOURCE[0]}" "${MODEL}"
+fi
 
 # 1. Load environment modules
 module --force purge
@@ -53,6 +79,9 @@ source "${VENV_DIR}/bin/activate"
 case "${MODEL}" in
   sssd-ecg)
     ./generate_scripts/generate_sssdecg.sh
+    ;;
+  tts-gan)
+    ./generate_scripts/generate_ttsgan.sh
     ;;
   *)
     echo "Unknown model: ${MODEL}" >&2
