@@ -119,6 +119,11 @@ diagnostic superclass derived from the 71-dim multi-hot SCP-statement labels
 - `TTS_GAN_PTBXL_NORMALIZE`: `none` (default; keeps the SSSD-ECG global standardization so outputs are cross-model comparable) or `per_sample` (UniMiB-style per-record z-norm)
 - `TTS_GAN_PTBXL_PATCH_SIZE`: discriminator patch size, must divide 1000 (default 25)
 
+Shared TTS-GAN knobs (both datasets): `TTS_GAN_MAX_ITER` (default 500000),
+`TTS_GAN_NUM_SAMPLES` (default 1000), `TTS_GAN_BATCH_SIZE` (default 16 — lower
+it if a PTB-XL job runs out of GPU memory; the generator's attention is
+seq_len x seq_len, so 1000-step ECG costs far more per sample than 150-step motion).
+
 Outputs per run: `ttsgan_ptbxl_<class>_samples.npy` with shape `(N, 12, 1, 1000)`,
 `ttsgan_ptbxl_<class>_labels.npy` with one-hot superclass rows `(N, 5)` in the
 order `NORM, MI, STTC, CD, HYP`, plus the checkpoint and a config txt.

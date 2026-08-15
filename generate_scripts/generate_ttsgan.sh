@@ -14,6 +14,10 @@ MODEL_BASE_DIR="${PROJECT_DIR}/model"
 DATASET="${TTS_GAN_DATASET:-unimib}"
 MAX_ITER="${TTS_GAN_MAX_ITER:-500000}"
 NUM_SAMPLES="${TTS_GAN_NUM_SAMPLES:-1000}"
+# The generator's self-attention is seq_len x seq_len, so PTB-XL (1000 steps)
+# needs far more memory per sample than UniMiB (150). Lower this if a job
+# OOMs; the default keeps the original UniMiB setting.
+BATCH_SIZE="${TTS_GAN_BATCH_SIZE:-16}"
 
 case "${DATASET}" in
   unimib)
@@ -134,8 +138,8 @@ run_training() {
   (
     cd "${model_repo_dir}"
     python "${TRAIN_ENTRY}" \
-      -gen_bs 16 \
-      -dis_bs 16 \
+      -gen_bs "${BATCH_SIZE}" \
+      -dis_bs "${BATCH_SIZE}" \
       --dist-url 'tcp://localhost:4321' \
       --dist-backend 'nccl' \
       --world-size 1 \
@@ -162,7 +166,7 @@ run_training() {
       --beta1 0.9 \
       --beta2 0.999 \
       --phi 1 \
-      --batch_size 16 \
+      --batch_size "${BATCH_SIZE}" \
       --num_eval_imgs 50000 \
       --init_type xavier_uniform \
       --n_critic 1 \
