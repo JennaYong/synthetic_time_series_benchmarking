@@ -86,9 +86,9 @@ class ptbxl_load_dataset(Dataset):
             'exclusive' - keep records annotated with exactly this one
                           superclass (cleaner class signal, fewer records).
         is_normalize: per-record, per-lead z-normalization (the UniMiB
-            pipeline's normalization). Off by default so synthetic output
-            stays in the same globally-standardized scale as the SSSD-ECG
-            training data and its synthesis, keeping models comparable.
+            pipeline's normalization). train_ptbxl_GAN.py turns this on by
+            default; without it TTS-GAN training diverges (see the
+            TTS_GAN_PTBXL_NORMALIZE notes there).
     """
 
     def __init__(self,

@@ -22,9 +22,18 @@ Environment overrides:
                               (default ./ptbxl/)
     TTS_GAN_PTBXL_LABEL_MODE  'any' (default) or 'exclusive', see
                               ptbxl_dataLoader.ptbxl_load_dataset
-    TTS_GAN_PTBXL_NORMALIZE   'none' (default) keeps the SSSD-ECG global
-                              standardization; 'per_sample' applies UniMiB-style
-                              per-record z-normalization
+    TTS_GAN_PTBXL_NORMALIZE   'per_sample' (default) applies UniMiB-style
+                              per-record z-normalization; 'none' keeps the
+                              SSSD-ECG global standardization.
+                              Keep the default: the generator has no output
+                              activation and no final LayerNorm, so nothing
+                              bounds its output scale. It was tuned for data
+                              with std ~1 (its own output at init has std
+                              ~0.47). Feeding the globally standardized PTB-XL
+                              (std 0.133) instead starts the generator 3.5x
+                              above the data scale and training runs away: a
+                              100k-iteration run produced samples with
+                              std 8078 vs 0.133 for real data.
     TTS_GAN_PTBXL_PATCH_SIZE  discriminator patch size, must divide 1000
                               (default 25 -> 40 patches)
 """
@@ -41,7 +50,7 @@ CHANNELS = 12
 
 DATA_PATH = os.environ.get('TTS_GAN_PTBXL_DATA', './ptbxl/')
 LABEL_MODE = os.environ.get('TTS_GAN_PTBXL_LABEL_MODE', 'any')
-NORMALIZE = os.environ.get('TTS_GAN_PTBXL_NORMALIZE', 'none')
+NORMALIZE = os.environ.get('TTS_GAN_PTBXL_NORMALIZE', 'per_sample')
 PATCH_SIZE = int(os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '25'))
 
 if NORMALIZE not in ('none', 'per_sample'):
@@ -59,9 +68,10 @@ def _make_ptbxl_dataset(incl_xyz_accel=None, incl_rms_accel=None, incl_val_group
     The accelerometer/one-hot flags have no PTB-XL counterpart and
     augment_times (tsaug motion augmentation) is not applied to ECG.
     is_normalize as passed by train_GAN.py is hardcoded True for UniMiB;
-    for PTB-XL the TTS_GAN_PTBXL_NORMALIZE env var decides instead, because
-    the SSSD-ECG npys are already globally standardized and re-normalizing
-    per record would put the synthesis on a scale other models don't share.
+    for PTB-XL the TTS_GAN_PTBXL_NORMALIZE env var decides instead, and it
+    defaults to the same per-record z-normalization for the stability reason
+    documented at the top of this file. Absolute scale is therefore not
+    preserved -- compare models on per-record z-normalized signals.
     """
     if augment_times:
         print(f'Warning: augment_times={augment_times} is ignored for PTB-XL')

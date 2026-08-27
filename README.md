@@ -123,7 +123,7 @@ PTB-XL specifics (see `preprocess/ttsgan/` for details): records are filtered by
 diagnostic superclass derived from the 71-dim multi-hot SCP-statement labels
 (alphabetical column order, verified against `ptbxl_database.csv`). Optional env vars:
 - `TTS_GAN_PTBXL_LABEL_MODE`: `any` (default; record contains the class) or `exclusive` (record has exactly that one superclass)
-- `TTS_GAN_PTBXL_NORMALIZE`: `none` (default; keeps the SSSD-ECG global standardization so outputs are cross-model comparable) or `per_sample` (UniMiB-style per-record z-norm)
+- `TTS_GAN_PTBXL_NORMALIZE`: `per_sample` (default; UniMiB-style per-record z-norm) or `none` (keeps the SSSD-ECG global standardization). **Keep the default.** The generator has no bounded output activation and no final LayerNorm, so nothing anchors its output scale; it was tuned for data with std ~1, and its own output at initialization has std ~0.47. Feeding the globally standardized PTB-XL (std 0.133) instead starts the generator 3.5x above the data scale, and training runs away — a 100k-iteration run produced samples with std 8078 against real data at std 0.133, with no recognizable QRS morphology. Because absolute scale is not preserved, compare models on per-record z-normalized signals at evaluation time.
 - `TTS_GAN_PTBXL_PATCH_SIZE`: discriminator patch size, must divide 1000 (default 25)
 
 Shared TTS-GAN knobs (both datasets): `TTS_GAN_MAX_ITER` (default 500000),
