@@ -7,7 +7,9 @@
 # ^ Fallback wall-time only. The real per-model limit is set at submit time by
 #   the self-submit block below (sssd-ecg=24h, tts-gan=10h). A command-line
 #   --time always overrides both.
-#SBATCH --job-name=sssd_benchmark
+#SBATCH --job-name=synth_benchmark
+# ^ Fallback name only, used when this file is submitted with `sbatch` directly.
+#   The self-submit block below sets a per-run name like tts-gan_ptbxl_NORM.
 #SBATCH --output=logs/job-%j.out
 #SBATCH --error=logs/job-%j.err
 
@@ -69,11 +71,18 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
       usage
       ;;
   esac
-  echo "Submitting ${MODEL}${TTS_GAN_DATASET:+ (dataset=${TTS_GAN_DATASET})} with --time=${TIME_LIMIT}"
+  # Name the job after what it actually runs, so `sq` / `sacct` can tell several
+  # concurrent runs apart (the static header above cannot depend on ${MODEL}).
+  JOB_NAME="${MODEL}"
+  if [[ "${MODEL}" == "tts-gan" ]]; then
+    JOB_NAME="${JOB_NAME}_${TTS_GAN_DATASET:-unimib}${TTS_GAN_CLASS:+_${TTS_GAN_CLASS}}"
+  fi
+
+  echo "Submitting ${JOB_NAME} with --time=${TIME_LIMIT}"
   # --export=ALL forwards the current environment (e.g. TTS_GAN_CLASS,
   # TTS_GAN_DATASET) into the submitted job so per-model options set on the
   # command line still apply.
-  exec sbatch --time="${TIME_LIMIT}" --export=ALL "${BASH_SOURCE[0]}" "${MODEL}"
+  exec sbatch --time="${TIME_LIMIT}" --job-name="${JOB_NAME}" --export=ALL "${BASH_SOURCE[0]}" "${MODEL}"
 fi
 
 # 1. Load environment modules
