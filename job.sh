@@ -51,10 +51,15 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
   case "${MODEL}" in
     sssd-ecg) TIME_LIMIT="24:00:00" ;;
     tts-gan)
-      # PTB-XL sequences are ~7x longer than UniMiB (1000 vs 150 steps) and the
-      # generator attention cost grows quadratically, so give those runs longer.
+      # Measured on nibi: PTB-XL NORM at TTS_GAN_MAX_ITER=100000 finished in
+      # 1:53:48 (~14.6 it/s), so 3h covers it with margin. The 1000-step
+      # sequences cost far less than the 150-step UniMiB ones would suggest
+      # because the generator's embed_dim is only 10.
+      # NOTE: 3h is calibrated for TTS_GAN_MAX_ITER=100000. A much larger value
+      # (e.g. 500000, roughly 10h) needs an explicit override:
+      #   sbatch --time=<HH:MM:SS> --export=ALL,TTS_GAN_DATASET=ptbxl,... job.sh tts-gan
       if [[ "${TTS_GAN_DATASET:-unimib}" == "ptbxl" ]]; then
-        TIME_LIMIT="24:00:00"
+        TIME_LIMIT="03:00:00"
       else
         TIME_LIMIT="10:00:00"
       fi

@@ -94,11 +94,18 @@ Run `job.sh` **directly** — do NOT use `sbatch ./job.sh <model>`. SBATCH `--ti
 
 Per-model wall-time:
 
-| Model    | Dataset | `--time` |
-|----------|---------|----------|
-| sssd-ecg | ptbxl   | 24:00:00 |
-| tts-gan  | unimib  | 10:00:00 |
-| tts-gan  | ptbxl   | 24:00:00 |
+| Model    | Dataset | `--time` | Basis |
+|----------|---------|----------|-------|
+| sssd-ecg | ptbxl   | 24:00:00 | `n_iters=100000` in `config_SSSD_ECG.json` |
+| tts-gan  | unimib  | 10:00:00 | |
+| tts-gan  | ptbxl   | 03:00:00 | measured 1:53:48 at `TTS_GAN_MAX_ITER=100000` |
+
+**TTS-GAN + PTB-XL timing (measured on nibi, H100 MIG 20GB, batch 16):** ~14.6
+it/s, so 100k iterations take under 2 hours wall-clock; the allocated 3h leaves
+margin for the per-epoch checkpoint writes and the generation step. This is
+faster than the 1000-step sequence length suggests because the generator's
+`embed_dim` is only 10. The 3h budget assumes `TTS_GAN_MAX_ITER=100000` — a
+much larger value (500000 is roughly 10h) needs a manual override.
 
 To override the wall-time manually, submit explicitly: `sbatch --time=<HH:MM:SS> job.sh <model>`.
 
