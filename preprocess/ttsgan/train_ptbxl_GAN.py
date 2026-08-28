@@ -35,7 +35,15 @@ Environment overrides:
                               100k-iteration run produced samples with
                               std 8078 vs 0.133 for real data.
     TTS_GAN_PTBXL_PATCH_SIZE  discriminator patch size, must divide 1000
-                              (default 25 -> 40 patches)
+                              (default 100 -> 10 patches + cls, the same token
+                              count as UniMiB's 150/15. With 25 (40 patches)
+                              training collapsed twice: the discriminator head
+                              mean-pools the tokens, and averaging 4x more
+                              tokens washes out the differences between fakes
+                              until D returns a constant 0.5 for all of them
+                              and G's gradient dies -- both losses freeze at
+                              exactly 0.25 by epoch ~9. At 100, the losses stay
+                              live through the same window.)
 """
 
 import functools
@@ -51,7 +59,7 @@ CHANNELS = 12
 DATA_PATH = os.environ.get('TTS_GAN_PTBXL_DATA', './ptbxl/')
 LABEL_MODE = os.environ.get('TTS_GAN_PTBXL_LABEL_MODE', 'any')
 NORMALIZE = os.environ.get('TTS_GAN_PTBXL_NORMALIZE', 'per_sample')
-PATCH_SIZE = int(os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '25'))
+PATCH_SIZE = int(os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '100'))
 
 if NORMALIZE not in ('none', 'per_sample'):
     raise ValueError(f"TTS_GAN_PTBXL_NORMALIZE must be 'none' or 'per_sample', got {NORMALIZE!r}")
