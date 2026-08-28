@@ -234,19 +234,32 @@ with torch.no_grad():
         chunks.append(gen_net(z[start:start + 50]).numpy())
 synthetic = np.concatenate(chunks, axis=0)
 
+if dataset == "ptbxl":
+    # train_ptbxl_GAN.ScaleNormalizedGenerator z-normalizes the generator
+    # output per (sample, lead); apply the identical transform here so
+    # generation matches training. It has no parameters, which is why the
+    # plain Generator above can load the checkpoint either way.
+    synthetic = ((synthetic - synthetic.mean(axis=3, keepdims=True))
+                 / (synthetic.std(axis=3, keepdims=True) + 1e-8))
+
 output_path = synthesis_dir / f"{output_prefix}_samples.npy"
 np.save(output_path, synthetic)
 
-# Sanity check on the amplitude. The generator has no bounded output
-# activation and no final LayerNorm, so a diverged run shows up as a wildly
-# inflated scale (a failed PTB-XL run produced std 8078 against real data at
-# std 0.133). Printing it here makes a bad run visible in the job log without
-# having to copy the npy back first.
+# Health check, printed so a failed run is obvious from the job log alone.
+# Amplitude on its own is not enough for PTB-XL now that the output is
+# normalized above, so also report temporal smoothness: the std of the first
+# difference over the std of the signal. Pointwise white noise gives
+# sqrt(2) ~ 1.41; real PTB-XL leads give ~0.66. The run that collapsed scored
+# 1.413, i.e. it had no temporal structure at all.
 sample_std = float(synthetic.std())
+diff_ratio = float(np.diff(synthetic, axis=3).std() / (synthetic.std() + 1e-12))
 print(f"Synthetic sample std: {sample_std:.4f}")
+print(f"Synthetic diff/signal std ratio: {diff_ratio:.3f} "
+      f"(real PTB-XL ~0.66, pointwise white noise ~1.41)")
 if not 0.01 < sample_std < 10.0:
-    print("WARNING: amplitude far outside the expected range for z-normalized "
-          "training data (std ~1) -- training almost certainly diverged.")
+    print("WARNING: amplitude far outside the expected range -- training diverged.")
+if diff_ratio > 1.2:
+    print("WARNING: output is close to pointwise white noise -- training collapsed.")
 
 if dataset == "ptbxl":
     # One-hot superclass labels (NORM,MI,STTC,CD,HYP) for downstream evaluation

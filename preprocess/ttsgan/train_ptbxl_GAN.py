@@ -87,9 +87,35 @@ def _make_ptbxl_dataset(incl_xyz_accel=None, incl_rms_accel=None, incl_val_group
     )
 
 
+class ScaleNormalizedGenerator(Generator):
+    """Generator whose output is z-normalized per (sample, lead) over time.
+
+    Without this, PTB-XL training dies in a specific way: the generator's
+    output scale escapes the data scale early on, the discriminator's
+    classification head (Reduce -> LayerNorm -> Linear) then saturates and
+    returns the same value for every fake, so G's gradient vanishes. Both
+    losses freeze at exactly 0.25 -- D(real)=1.0, D(fake)=0.5 -- within ~5
+    epochs and never move again, while G drifts until its output is white
+    noise at std 22000 (real data: std 1 after normalization).
+
+    Normalizing here puts every generated record on the same scale as the
+    per-record z-normalized training data, so the discriminator never sees
+    an out-of-scale input and keeps producing a usable gradient. The
+    operation has no parameters, so checkpoints stay compatible with the
+    plain Generator -- the generation step in generate_scripts/generate_ttsgan.sh
+    applies the identical transform to the numpy output instead.
+    """
+
+    def forward(self, z):
+        out = super().forward(z)                       # (B, C, 1, T)
+        mean = out.mean(dim=3, keepdim=True)
+        std = out.std(dim=3, keepdim=True)
+        return (out - mean) / (std + 1e-8)
+
+
 train_GAN.unimib_load_dataset = _make_ptbxl_dataset
 train_GAN.Generator = functools.partial(
-    Generator, seq_len=SEQ_LEN, channels=CHANNELS)
+    ScaleNormalizedGenerator, seq_len=SEQ_LEN, channels=CHANNELS)
 train_GAN.Discriminator = functools.partial(
     Discriminator, in_channels=CHANNELS, patch_size=PATCH_SIZE, seq_length=SEQ_LEN)
 
