@@ -44,6 +44,17 @@ Environment overrides:
                               and G's gradient dies -- both losses freeze at
                               exactly 0.25 by epoch ~9. At 100, the losses stay
                               live through the same window.)
+    TTS_GAN_PTBXL_EMBED_DIM   generator embedding width per timestep (default
+                              40; must be divisible by 5 because the generator
+                              blocks hardcode 5 attention heads). The upstream
+                              default of 10 gives each head only 2 dimensions
+                              to model a 1000-step 12-lead record; with it,
+                              even after the scale and patch fixes, the
+                              generator never approaches the data manifold and
+                              every full run eventually falls back into the
+                              frozen-0.25 state (last one between epoch 19 and
+                              122). Checkpoints only load with the embed_dim
+                              they were trained with.
 """
 
 import functools
@@ -60,11 +71,16 @@ DATA_PATH = os.environ.get('TTS_GAN_PTBXL_DATA', './ptbxl/')
 LABEL_MODE = os.environ.get('TTS_GAN_PTBXL_LABEL_MODE', 'any')
 NORMALIZE = os.environ.get('TTS_GAN_PTBXL_NORMALIZE', 'per_sample')
 PATCH_SIZE = int(os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '100'))
+EMBED_DIM = int(os.environ.get('TTS_GAN_PTBXL_EMBED_DIM', '40'))
 
 if NORMALIZE not in ('none', 'per_sample'):
     raise ValueError(f"TTS_GAN_PTBXL_NORMALIZE must be 'none' or 'per_sample', got {NORMALIZE!r}")
 if SEQ_LEN % PATCH_SIZE != 0:
     raise ValueError(f"TTS_GAN_PTBXL_PATCH_SIZE must divide {SEQ_LEN}, got {PATCH_SIZE}")
+if EMBED_DIM <= 0 or EMBED_DIM % 5 != 0:
+    raise ValueError(
+        f"TTS_GAN_PTBXL_EMBED_DIM must be a positive multiple of 5 (the generator "
+        f"blocks hardcode 5 attention heads), got {EMBED_DIM}")
 
 
 def _make_ptbxl_dataset(incl_xyz_accel=None, incl_rms_accel=None, incl_val_group=None,
@@ -123,7 +139,7 @@ class ScaleNormalizedGenerator(Generator):
 
 train_GAN.unimib_load_dataset = _make_ptbxl_dataset
 train_GAN.Generator = functools.partial(
-    ScaleNormalizedGenerator, seq_len=SEQ_LEN, channels=CHANNELS)
+    ScaleNormalizedGenerator, seq_len=SEQ_LEN, channels=CHANNELS, embed_dim=EMBED_DIM)
 train_GAN.Discriminator = functools.partial(
     Discriminator, in_channels=CHANNELS, patch_size=PATCH_SIZE, seq_length=SEQ_LEN)
 

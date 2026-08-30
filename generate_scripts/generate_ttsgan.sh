@@ -200,6 +200,7 @@ collect_synthesis_outputs() {
   (
     cd "${model_repo_dir}"
     python3 - "${latest_ckpt}" "${synthesis_dir}" "${CLASS_NAME}" "${NUM_SAMPLES}" "${DATASET}" "${OUTPUT_PREFIX}" <<'PY'
+import os
 import sys
 from pathlib import Path
 
@@ -218,7 +219,10 @@ output_prefix = sys.argv[6]
 # Must match the training-time instantiation (train_GAN.py defaults for
 # UniMiB; train_ptbxl_GAN.py dimensions for PTB-XL)
 if dataset == "ptbxl":
-    gen_net = Generator(seq_len=1000, channels=12)
+    # Must mirror train_ptbxl_GAN.py: same embed_dim as the checkpoint was
+    # trained with, or load_state_dict fails (loudly) on shape mismatch.
+    embed_dim = int(os.environ.get("TTS_GAN_PTBXL_EMBED_DIM", "40"))
+    gen_net = Generator(seq_len=1000, channels=12, embed_dim=embed_dim)
 else:
     gen_net = Generator()
 checkpoint = torch.load(ckpt_path, map_location="cpu")
@@ -279,6 +283,9 @@ meta_path.write_text(
     f"Num_samples: {num_samples}\n"
     f"Shape: {synthetic.shape}\n"
     f"Sample_std: {sample_std:.4f}\n"
+    + (f"Embed_dim: {embed_dim}\n"
+       f"Patch_size: {os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '100')}\n"
+       if dataset == "ptbxl" else "")
 )
 
 print(f"Saved {synthetic.shape} synthetic samples to {output_path}")
