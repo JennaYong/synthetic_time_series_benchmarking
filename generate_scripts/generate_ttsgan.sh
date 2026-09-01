@@ -18,6 +18,15 @@ NUM_SAMPLES="${TTS_GAN_NUM_SAMPLES:-1000}"
 # needs far more memory per sample than UniMiB (150). Lower this if a job
 # OOMs; the default keeps the original UniMiB setting.
 BATCH_SIZE="${TTS_GAN_BATCH_SIZE:-16}"
+# Set TTS_GAN_LR_DECAY=1 to decay both learning rates linearly to 0 over
+# TTS_GAN_MAX_ITER (upstream's --lr_decay, off by default). PTB-XL runs stay
+# healthy for ~60 epochs and then collapse into the frozen-0.25 state at every
+# length beyond that; a constant learning rate for 187 epochs is the usual
+# suspect for that shape of late-stage GAN failure.
+LR_DECAY_FLAG=""
+if [[ -n "${TTS_GAN_LR_DECAY:-}" && "${TTS_GAN_LR_DECAY}" != "0" ]]; then
+  LR_DECAY_FLAG="--lr_decay"
+fi
 
 case "${DATASET}" in
   unimib)
@@ -180,6 +189,7 @@ run_training() {
       --ema 0.9999 \
       --diff_aug translation,cutout,color \
       --class_name "${CLASS_NAME}" \
+      ${LR_DECAY_FLAG} \
       --exp_name "${EXP_NAME}"
   )
 }

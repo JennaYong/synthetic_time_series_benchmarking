@@ -127,6 +127,14 @@ diagnostic superclass derived from the 71-dim multi-hot SCP-statement labels
 - `TTS_GAN_PTBXL_PATCH_SIZE`: discriminator patch size, must divide 1000 (default 100 — 10 tokens + cls, matching UniMiB's token count; 25 made the discriminator's mean-pooled head go blind to fakes and training collapsed by epoch ~9 with both losses frozen at 0.25)
 - `TTS_GAN_PTBXL_EMBED_DIM`: generator embedding width per timestep (default 40; must be a multiple of 5 — the generator blocks hardcode 5 attention heads). The upstream default of 10 gives each attention head just 2 dimensions to model a 1000-step 12-lead record; all three full runs with it eventually fell back into the frozen-0.25 collapse even after the scale and patch fixes. Checkpoints only load with the embed_dim they were trained with.
 
+**Known limit on PTB-XL:** training is stable for roughly the first 60 epochs
+and then collapses. Runs at 5k, 10k and 30k iterations all stay healthy; every
+187-epoch (100k iteration) run so far has ended in the frozen-0.25 state with
+white-noise output, including after the scale, patch-size and embed-dim fixes.
+`TTS_GAN_MAX_ITER=30000` is the largest verified-good setting. Set
+`TTS_GAN_LR_DECAY=1` to decay both learning rates linearly to zero over the run
+(upstream's `--lr_decay`, off by default) when trying to push past that window.
+
 Shared TTS-GAN knobs (both datasets): `TTS_GAN_MAX_ITER` (default 500000),
 `TTS_GAN_NUM_SAMPLES` (default 1000), `TTS_GAN_BATCH_SIZE` (default 16 — lower
 it if a PTB-XL job runs out of GPU memory; the generator's attention is
