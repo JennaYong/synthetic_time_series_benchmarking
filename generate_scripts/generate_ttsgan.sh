@@ -56,7 +56,23 @@ esac
 
 model_repo_dir=""
 training_date="$(date +%Y-%m-%d)"
-synthesis_dir="${PROJECT_DIR}/synthesis/TTS-GAN/${training_date}"
+
+# The output directory carries a fingerprint of the run's configuration, not
+# just the date. Output filenames only distinguish the class, so two runs of
+# the same class on the same day with different settings used to overwrite
+# each other silently -- samples, labels and checkpoint all lost. (That is how
+# a 56-epoch NORM run was destroyed by a 187-epoch one submitted alongside it.)
+# Runs that differ only in class still share a directory, so submitting all
+# five classes with the same settings keeps them together as before.
+# NOTE: the ptbxl defaults below must stay in step with train_ptbxl_GAN.py.
+run_tag="i${MAX_ITER}"
+if [[ "${DATASET}" == "ptbxl" ]]; then
+  run_tag="${run_tag}_e${TTS_GAN_PTBXL_EMBED_DIM:-40}_p${TTS_GAN_PTBXL_PATCH_SIZE:-100}"
+fi
+if [[ -n "${LR_DECAY_FLAG}" ]]; then
+  run_tag="${run_tag}_lrdecay"
+fi
+synthesis_dir="${PROJECT_DIR}/synthesis/TTS-GAN/${training_date}_${run_tag}"
 
 # 1. Check for repository existence
 if [[ -d "${MODEL_BASE_DIR}/tts-gan/tts-gan" ]]; then

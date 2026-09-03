@@ -140,6 +140,13 @@ Shared TTS-GAN knobs (both datasets): `TTS_GAN_MAX_ITER` (default 500000),
 it if a PTB-XL job runs out of GPU memory; the generator's attention is
 seq_len x seq_len, so 1000-step ECG costs far more per sample than 150-step motion).
 
+Outputs land in `synthesis/TTS-GAN/<date>_i<max_iter>[_e<embed>_p<patch>][_lrdecay]/`.
+The configuration is part of the directory name because the filenames inside
+only distinguish the class: two runs of the same class on the same day with
+different settings would otherwise overwrite each other's samples, labels and
+checkpoint silently. Runs that differ only in class still share one directory,
+so submitting all five classes with the same settings keeps them together.
+
 Outputs per run: `ttsgan_ptbxl_<class>_samples.npy` with shape `(N, 12, 1, 1000)`,
 `ttsgan_ptbxl_<class>_labels.npy` with one-hot superclass rows `(N, 5)` in the
 order `NORM, MI, STTC, CD, HYP`, plus the checkpoint and a config txt.
