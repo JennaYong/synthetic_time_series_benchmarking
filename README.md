@@ -236,12 +236,14 @@ than a plain 56-epoch run.
 
 Per-record z-normalized, lead II. `diff/signal` is the std of the first
 difference over the std of the signal — pointwise white noise scores ~1.41.
+Real and SSSD-ECG are measured on 400 records per class (HYP: 245 for
+SSSD-ECG); TTS-GAN on its full 1000 generated samples per class.
 
 | Class | Source | diff/signal | HR-band energy | Autocorr peak |
 |---|---|---|---|---|
 | NORM | Real | 0.663 | 15.2% | 0.176 |
 | | SSSD-ECG | 0.664 | 16.1% | 0.271 |
-| | TTS-GAN | 0.946 | 13.6% | 0.086 |
+| | TTS-GAN | 0.939 | 13.7% | 0.089 |
 | MI | Real | 0.568 | 26.4% | 0.167 |
 | | SSSD-ECG | 0.589 | 27.7% | 0.160 |
 | | TTS-GAN | 1.060 | 18.3% | 0.050 |
