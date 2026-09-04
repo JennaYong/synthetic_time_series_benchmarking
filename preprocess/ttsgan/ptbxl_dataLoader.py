@@ -22,8 +22,11 @@ superclasses NORM / MI / STTC / CD / HYP via scp_statements.csv
 (diagnostic_class). TTS-GAN trains one unconditional GAN per class, so this
 loader filters records by one chosen superclass.
 
-Items are returned as (channels=12, 1, timesteps=1000) float32 — the
-(C, 1, T) layout train_GAN.py / functions.py expect.
+Items are returned as (channels=12, 1, timesteps=window) float32 — the
+(C, 1, T) layout train_GAN.py / functions.py expect. `window` defaults to the
+full 1000-step record; a smaller divisor of 1000 splits every record into
+consecutive non-overlapping windows, which both shortens the sequence the
+generator has to model and multiplies the number of training samples.
 """
 
 import os
@@ -89,6 +92,11 @@ class ptbxl_load_dataset(Dataset):
             pipeline's normalization). train_ptbxl_GAN.py turns this on by
             default; without it TTS-GAN training diverges (see the
             TTS_GAN_PTBXL_NORMALIZE notes there).
+        window: timesteps per training item; must divide 1000. The default
+            1000 keeps whole records. A smaller value (e.g. 250 = 2.5 s) cuts
+            each record into 1000//window consecutive windows, so the sample
+            count grows by the same factor. Normalization is applied per
+            window, after splitting, so each item still has unit std.
     """
 
     def __init__(self,
@@ -97,6 +105,7 @@ class ptbxl_load_dataset(Dataset):
                  class_name='NORM',
                  label_mode='any',
                  is_normalize=False,
+                 window=1000,
                  verbose=True):
         if class_name not in SUPERCLASSES:
             raise ValueError(f"class_name must be one of {SUPERCLASSES}, got {class_name!r}")
@@ -104,6 +113,8 @@ class ptbxl_load_dataset(Dataset):
             raise ValueError(f"label_mode must be 'any' or 'exclusive', got {label_mode!r}")
         if data_mode not in ('Train', 'Test'):
             raise ValueError(f"data_mode must be 'Train' or 'Test', got {data_mode!r}")
+        if window <= 0 or 1000 % window != 0:
+            raise ValueError(f"window must be a positive divisor of 1000, got {window}")
 
         self.data_mode = data_mode
         self.class_name = class_name
@@ -137,16 +148,25 @@ class ptbxl_load_dataset(Dataset):
             keep = has_class
 
         data = data[keep].astype(np.float32)
-        # (N, 12, 1000) -> (N, 12, 1, 1000): the (C, 1, T) layout TTS-GAN uses
-        self.data = data.reshape(data.shape[0], data.shape[1], 1, data.shape[2])
+        n_records = data.shape[0]
+        # (N, 12, 1000) -> (N * 1000//window, 12, 1, window): the (C, 1, T)
+        # layout TTS-GAN uses, with each record split into consecutive windows.
+        # Splitting before normalizing means every window has unit std on its
+        # own, which is what the discriminator then sees.
+        per_record = data.shape[2] // window
+        data = data.reshape(n_records, data.shape[1], per_record, window)
+        data = data.transpose(0, 2, 1, 3).reshape(-1, data.shape[1], 1, window)
+        self.data = data
         self.labels = np.full(self.data.shape[0], class_idx, dtype=np.int64)
 
         if is_normalize:
             self.data = self._normalize_per_record(self.data)
 
         if verbose:
+            windowing = '' if per_record == 1 else f' -> {per_record} windows of {window} each'
             print(f'PTB-XL {data_mode} split(s) {splits}: {keep.sum()} of {len(keep)} '
-                  f'records kept for superclass {class_name} (label_mode={label_mode})')
+                  f'records kept for superclass {class_name} (label_mode={label_mode})'
+                  f'{windowing}')
             print(f'data shape is {self.data.shape}, labels shape is {self.labels.shape}')
 
     @staticmethod

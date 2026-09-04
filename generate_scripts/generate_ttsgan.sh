@@ -67,7 +67,9 @@ training_date="$(date +%Y-%m-%d)"
 # NOTE: the ptbxl defaults below must stay in step with train_ptbxl_GAN.py.
 run_tag="i${MAX_ITER}"
 if [[ "${DATASET}" == "ptbxl" ]]; then
-  run_tag="${run_tag}_e${TTS_GAN_PTBXL_EMBED_DIM:-40}_p${TTS_GAN_PTBXL_PATCH_SIZE:-100}"
+  ptbxl_window="${TTS_GAN_PTBXL_WINDOW:-1000}"
+  run_tag="${run_tag}_w${ptbxl_window}_e${TTS_GAN_PTBXL_EMBED_DIM:-40}"
+  run_tag="${run_tag}_p${TTS_GAN_PTBXL_PATCH_SIZE:-$((ptbxl_window / 10))}"
 fi
 if [[ -n "${LR_DECAY_FLAG}" ]]; then
   run_tag="${run_tag}_lrdecay"
@@ -245,10 +247,12 @@ output_prefix = sys.argv[6]
 # Must match the training-time instantiation (train_GAN.py defaults for
 # UniMiB; train_ptbxl_GAN.py dimensions for PTB-XL)
 if dataset == "ptbxl":
-    # Must mirror train_ptbxl_GAN.py: same embed_dim as the checkpoint was
-    # trained with, or load_state_dict fails (loudly) on shape mismatch.
+    # Must mirror train_ptbxl_GAN.py: same window and embed_dim as the
+    # checkpoint was trained with, or load_state_dict fails (loudly) on shape
+    # mismatch. Samples are therefore (N, 12, 1, window), not always 1000 steps.
+    seq_len = int(os.environ.get("TTS_GAN_PTBXL_WINDOW", "1000"))
     embed_dim = int(os.environ.get("TTS_GAN_PTBXL_EMBED_DIM", "40"))
-    gen_net = Generator(seq_len=1000, channels=12, embed_dim=embed_dim)
+    gen_net = Generator(seq_len=seq_len, channels=12, embed_dim=embed_dim)
 else:
     gen_net = Generator()
 checkpoint = torch.load(ckpt_path, map_location="cpu")
@@ -309,8 +313,9 @@ meta_path.write_text(
     f"Num_samples: {num_samples}\n"
     f"Shape: {synthetic.shape}\n"
     f"Sample_std: {sample_std:.4f}\n"
-    + (f"Embed_dim: {embed_dim}\n"
-       f"Patch_size: {os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '100')}\n"
+    + (f"Window: {seq_len}\n"
+       f"Embed_dim: {embed_dim}\n"
+       f"Patch_size: {os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', str(seq_len // 10))}\n"
        if dataset == "ptbxl" else "")
 )
 

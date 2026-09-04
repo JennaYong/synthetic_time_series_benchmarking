@@ -136,10 +136,11 @@ verified-good configuration; change them only deliberately**):
 | `TTS_GAN_LR_DECAY` | off | `1` decays both learning rates linearly to zero over the run. |
 | `TTS_GAN_PTBXL_LABEL_MODE` | `any` | `any` = record contains the class; `exclusive` = record has only that superclass. |
 | `TTS_GAN_PTBXL_NORMALIZE` | `per_sample` | Per-record, per-lead z-normalization. |
-| `TTS_GAN_PTBXL_PATCH_SIZE` | 100 | Discriminator patch size; must divide 1000. |
+| `TTS_GAN_PTBXL_PATCH_SIZE` | window/10 | Discriminator patch size; must divide the window. The default keeps 10 tokens at any window length. |
 | `TTS_GAN_PTBXL_EMBED_DIM` | 40 | Generator width per timestep; must be a multiple of 5. |
+| `TTS_GAN_PTBXL_WINDOW` | 1000 | Timesteps per training item; must divide 1000. `250` splits each record into four 2.5 s windows. |
 
-Outputs land in `synthesis/TTS-GAN/<date>_i<max_iter>[_e<embed>_p<patch>][_lrdecay]/`.
+Outputs land in `synthesis/TTS-GAN/<date>_i<max_iter>[_w<window>_e<embed>_p<patch>][_lrdecay]/`.
 The configuration is part of the directory name because the filenames inside
 only distinguish the class: two runs of the same class on the same day with
 different settings would otherwise overwrite each other's samples, labels and
@@ -298,19 +299,20 @@ strictly comparable for TTS-GAN, whose output is per-lead normalized by design.
 
 ## Recommended next steps
 
-1. **Shorter windows — the highest-value experiment.** Cut each 10 s record into
-   four 2.5 s windows (250 steps). That puts the sequence length near the 150
-   steps the architecture was tuned for, where its output is healthy, and it
-   also multiplies the training set by four, which most helps the smallest class
-   (HYP 2392 -> 9568). The cost is a protocol change: real data and SSSD-ECG
-   output must be cropped to the same window for comparison. This is standard
-   practice in the ECG generation literature and is worth doing before spending
-   more on hyperparameters. Implementation is a windowing option in
-   `ptbxl_dataLoader.py` plus `SEQ_LEN` and `patch_size`.
+1. **Shorter windows — implemented, results pending.** `TTS_GAN_PTBXL_WINDOW=250`
+   cuts each 10 s record into four 2.5 s windows. That puts the sequence length
+   near the 150 steps the architecture was tuned for, where its output is
+   healthy, and multiplies the training set by four, which most helps the
+   smallest class (HYP 2392 -> 9568 windows). `patch_size` follows the window by
+   default, so the discriminator keeps its 10 tokens. The cost is a protocol
+   change: real data and SSSD-ECG output must be cropped to the same window for
+   comparison. Samples are then `(N, 12, 1, 250)`.
 2. **Build `evaluation/`.** `diff/signal` was built to detect training failure
    quickly and should not be the reported quality metric. A benchmark needs
    several axes: morphology, power spectra, distributional distance, and a
    train-on-synthetic / test-on-real classifier score.
-3. **Only then consider more capacity** (`embed_dim` 40 -> 80, `depth` 3 -> 5).
-   Expected value is lower than the windowing change, and larger generators may
-   shorten the stability window further.
+3. **More capacity** (`embed_dim` 40 -> 80). Worth running as the second arm of
+   an ablation against the windowing change, since the two address different
+   limits — sequence length versus representational width. Larger generators may
+   shorten the stability window further, so check the loss trace before
+   committing to a long run.

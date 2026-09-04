@@ -55,6 +55,14 @@ Environment overrides:
                               frozen-0.25 state (last one between epoch 19 and
                               122). Checkpoints only load with the embed_dim
                               they were trained with.
+    TTS_GAN_PTBXL_WINDOW      timesteps per training item; must divide 1000
+                              (default 1000, i.e. whole 10 s records). Setting
+                              250 cuts every record into four 2.5 s windows,
+                              which shortens the sequence towards the 150 steps
+                              the architecture was tuned on and multiplies the
+                              training set by four. The comparison protocol has
+                              to follow: real data and other models' output must
+                              be cropped to the same window length.
 """
 
 import functools
@@ -64,17 +72,24 @@ import train_GAN
 from GANModels import Generator, Discriminator
 from ptbxl_dataLoader import ptbxl_load_dataset, SUPERCLASSES
 
-SEQ_LEN = 1000
+RECORD_LEN = 1000
 CHANNELS = 12
 
 DATA_PATH = os.environ.get('TTS_GAN_PTBXL_DATA', './ptbxl/')
 LABEL_MODE = os.environ.get('TTS_GAN_PTBXL_LABEL_MODE', 'any')
 NORMALIZE = os.environ.get('TTS_GAN_PTBXL_NORMALIZE', 'per_sample')
-PATCH_SIZE = int(os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '100'))
+SEQ_LEN = int(os.environ.get('TTS_GAN_PTBXL_WINDOW', str(RECORD_LEN)))
+# 10 patches + cls, the token count the architecture was tuned on. Deriving the
+# default from SEQ_LEN keeps that ratio at any window length, and reproduces the
+# previous fixed default of 100 at the full 1000-step record.
+PATCH_SIZE = int(os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', str(SEQ_LEN // 10)))
 EMBED_DIM = int(os.environ.get('TTS_GAN_PTBXL_EMBED_DIM', '40'))
 
 if NORMALIZE not in ('none', 'per_sample'):
     raise ValueError(f"TTS_GAN_PTBXL_NORMALIZE must be 'none' or 'per_sample', got {NORMALIZE!r}")
+if SEQ_LEN <= 0 or RECORD_LEN % SEQ_LEN != 0:
+    raise ValueError(
+        f"TTS_GAN_PTBXL_WINDOW must be a positive divisor of {RECORD_LEN}, got {SEQ_LEN}")
 if SEQ_LEN % PATCH_SIZE != 0:
     raise ValueError(f"TTS_GAN_PTBXL_PATCH_SIZE must divide {SEQ_LEN}, got {PATCH_SIZE}")
 if EMBED_DIM <= 0 or EMBED_DIM % 5 != 0:
@@ -108,6 +123,7 @@ def _make_ptbxl_dataset(incl_xyz_accel=None, incl_rms_accel=None, incl_val_group
         class_name=class_name,
         label_mode=LABEL_MODE,
         is_normalize=(NORMALIZE == 'per_sample'),
+        window=SEQ_LEN,
     )
 
 
