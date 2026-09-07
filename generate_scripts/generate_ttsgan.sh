@@ -44,7 +44,12 @@ case "${DATASET}" in
         exit 1
         ;;
     esac
-    EXP_NAME="ptbxl_${CLASS_NAME}"
+    # Upstream set_log_dir() builds logs/<exp_name>_<timestamp-to-the-second>/
+    # and calls os.makedirs() without exist_ok, so two jobs for the same class
+    # that start in the same second crash on FileExistsError. Slurm's job id
+    # makes the name unique; collect_synthesis_outputs globs on EXP_NAME, so it
+    # still finds this run's own checkpoint.
+    EXP_NAME="ptbxl_${CLASS_NAME}${SLURM_JOB_ID:+_${SLURM_JOB_ID}}"
     TRAIN_ENTRY="train_ptbxl_GAN.py"
     OUTPUT_PREFIX="ttsgan_ptbxl_$(echo "${CLASS_NAME}" | tr '[:upper:]' '[:lower:]')"
     ;;
