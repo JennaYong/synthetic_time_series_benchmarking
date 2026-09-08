@@ -358,6 +358,27 @@ ranked 6000 higher, another reason not to trust it for ranking.
    this work ended up being made from waveform plots. A benchmark needs
    morphology, power spectra, distributional distance, and a train-on-synthetic
    / test-on-real classifier score.
-2. **Further TTS-GAN tuning has low expected value.** The window and capacity
-   ablation below explored the two remaining axes and gained about 25%; the
-   output is still visibly not an ECG.
+2. **Extend the stability window before spending capacity on it.** Every failure
+   so far is the discriminator winning outright, and the two cheapest untried
+   remedies target that directly: the discriminator learns 3x faster than the
+   generator by default (`TTS_GAN_D_LR` 3e-4 against `TTS_GAN_G_LR` 1e-4), and
+   `TTS_GAN_LOSS=wgangp` selects an objective that upstream already implements
+   and that is far less prone to this particular vanishing-gradient collapse.
+   Note that `--d_spectral_norm`, the other standard stabiliser, is defined in
+   `cfg.py` but read nowhere in the training code -- using it means writing it.
+3. **Then raise model capacity.** `latent_dim` (100) and the generator's `depth`
+   (3) are both untried, and neither needs a change to the model code -- only
+   the same runtime rebinding `embed_dim` already uses. Do this after step 2,
+   not before: the one capacity change already measured, `embed_dim` 40 -> 80,
+   improved quality slightly but cut the stability window from >30k gradient
+   steps to ~14,500, so extra capacity is currently paid for in training length.
+   `latent_dim` additionally appears hardcoded as 100 in the generation step of
+   `generate_ttsgan.sh` and in upstream's `gen_plot`, so both need updating with
+   it or generation will fail on a shape mismatch.
+4. **Reduce the difficulty of the task itself.** Windows are currently cut at
+   arbitrary offsets, so the generator has to learn where beats fall as well as
+   what they look like; centring each window on a detected beat removes half of
+   that. Generating 8 leads and deriving the other 4 by the standard formula --
+   as SSSD-ECG does -- would also stop the model spending capacity on 4 leads
+   that are not independent, and would make its output physiologically
+   consistent by construction.
