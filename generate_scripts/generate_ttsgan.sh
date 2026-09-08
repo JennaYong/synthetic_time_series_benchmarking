@@ -23,6 +23,16 @@ BATCH_SIZE="${TTS_GAN_BATCH_SIZE:-16}"
 # healthy for ~60 epochs and then collapse into the frozen-0.25 state at every
 # length beyond that; a constant learning rate for 187 epochs is the usual
 # suspect for that shape of late-stage GAN failure.
+# Adversarial balance. The discriminator learns 3x faster than the generator by
+# default (3e-4 vs 1e-4), and every PTB-XL collapse so far has been D winning
+# outright -- it starts scoring every fake identically, G's gradient vanishes,
+# and both LSGAN losses freeze at 0.25. Lowering D_LR is the standard remedy.
+# LOSS selects the adversarial objective; wgangp is implemented upstream and is
+# less prone to that particular vanishing-gradient failure than lsgan.
+D_LR="${TTS_GAN_D_LR:-0.0003}"
+G_LR="${TTS_GAN_G_LR:-0.0001}"
+LOSS="${TTS_GAN_LOSS:-lsgan}"
+
 LR_DECAY_FLAG=""
 if [[ -n "${TTS_GAN_LR_DECAY:-}" && "${TTS_GAN_LR_DECAY}" != "0" ]]; then
   LR_DECAY_FLAG="--lr_decay"
@@ -79,6 +89,10 @@ fi
 if [[ -n "${LR_DECAY_FLAG}" ]]; then
   run_tag="${run_tag}_lrdecay"
 fi
+# Only tag non-defaults, so existing directory names stay as they are.
+if [[ "${D_LR}" != "0.0003" ]]; then run_tag="${run_tag}_dlr${D_LR}"; fi
+if [[ "${G_LR}" != "0.0001" ]]; then run_tag="${run_tag}_glr${G_LR}"; fi
+if [[ "${LOSS}" != "lsgan" ]]; then run_tag="${run_tag}_${LOSS}"; fi
 synthesis_dir="${PROJECT_DIR}/synthesis/TTS-GAN/${training_date}_${run_tag}"
 
 # 1. Check for repository existence
@@ -190,10 +204,10 @@ run_training() {
       --latent_dim 100 \
       --gf_dim 1024 \
       --num_workers "${SLURM_CPUS_PER_TASK:-8}" \
-      --g_lr 0.0001 \
-      --d_lr 0.0003 \
+      --g_lr "${G_LR}" \
+      --d_lr "${D_LR}" \
       --optimizer adam \
-      --loss lsgan \
+      --loss "${LOSS}" \
       --wd 1e-3 \
       --beta1 0.9 \
       --beta2 0.999 \
