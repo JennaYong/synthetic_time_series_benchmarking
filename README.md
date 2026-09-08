@@ -297,22 +297,67 @@ strictly comparable for TTS-GAN, whose output is per-lead normalized by design.
   value fails loudly, which is intended — but it means old checkpoints cannot be
   reused after changing that setting.
 
+## Two working configurations
+
+The window and capacity ablation produced a second, better configuration. Both
+are kept because they are not interchangeable — they generate different signal
+lengths.
+
+| | Full-length | Short-window |
+|---|---|---|
+| `TTS_GAN_PTBXL_WINDOW` | 1000 (default) | 250 |
+| `TTS_GAN_PTBXL_EMBED_DIM` | 40 (default) | 80 |
+| `TTS_GAN_PTBXL_PATCH_SIZE` | 100 (auto) | 25 (auto) |
+| Training length | 56 epochs per class | ~8000 gradient steps per class |
+| Output shape | `(N, 12, 1, 1000)` | `(N, 12, 1, 250)` |
+| Use it for | direct comparison against SSSD-ECG, which emits 10 s records | best available TTS-GAN morphology, if the comparison set is cropped to 2.5 s |
+
+`diff/signal` gap against a real-data baseline computed at the same window
+length (a 2.5 s crop of real PTB-XL scores 0.571-0.700, not 0.66):
+
+| Class | Full-length gap | Short-window gap |
+|---|---|---|
+| NORM | +0.276 | **+0.209** |
+| MI | +0.492 | **+0.362** |
+| STTC | +0.466 | **+0.299** |
+| CD | +0.497 | **+0.449** |
+| HYP | +0.427 | **+0.312** |
+
+The short-window configuration closes roughly a quarter of the gap and is the
+first setting whose output shows sharp isolated spikes on a comparatively flat
+baseline. It is still clearly distinguishable from real ECG.
+
+## What the ablation showed about stability
+
+Collapse point by configuration, measured from the loss trace (both LSGAN
+losses frozen at 0.25):
+
+| Configuration | Collapse at |
+|---|---|
+| window 1000, embed 40 | > 30,000 steps (56 epochs) |
+| window 1000, embed 80 | ~14,500 steps (~27 epochs) |
+| window 250, embed 80 | ~8,500 steps (~4 epochs) |
+
+Both shortening the window and widening the generator **shorten** the stability
+window in gradient steps, so each configuration has to be stopped at its own
+point rather than trained to a common budget. Which quantity drives the
+collapse also changes with the window: at 1000 steps per record, equalizing
+epochs across classes fixed it, while at 250 steps HYP ran 13.4 epochs without
+collapsing and matching gradient steps was the right protocol instead.
+
+A training-length sweep at window 250 / embed 80 (4k, 6k, 8k, 12k, 16k steps)
+put the quality peak at 8000, just before the collapse — and `diff/signal`
+ranked 6000 higher, another reason not to trust it for ranking.
+
 ## Recommended next steps
 
-1. **Shorter windows — implemented, results pending.** `TTS_GAN_PTBXL_WINDOW=250`
-   cuts each 10 s record into four 2.5 s windows. That puts the sequence length
-   near the 150 steps the architecture was tuned for, where its output is
-   healthy, and multiplies the training set by four, which most helps the
-   smallest class (HYP 2392 -> 9568 windows). `patch_size` follows the window by
-   default, so the discriminator keeps its 10 tokens. The cost is a protocol
-   change: real data and SSSD-ECG output must be cropped to the same window for
-   comparison. Samples are then `(N, 12, 1, 250)`.
-2. **Build `evaluation/`.** `diff/signal` was built to detect training failure
-   quickly and should not be the reported quality metric. A benchmark needs
-   several axes: morphology, power spectra, distributional distance, and a
-   train-on-synthetic / test-on-real classifier score.
-3. **More capacity** (`embed_dim` 40 -> 80). Worth running as the second arm of
-   an ablation against the windowing change, since the two address different
-   limits — sequence length versus representational width. Larger generators may
-   shorten the stability window further, so check the loss trace before
-   committing to a long run.
+1. **Build `evaluation/`.** `diff/signal` was built to detect training failure
+   quickly and repeatedly proved unreliable as a quality score: it ranked a
+   low-pass-filtered collapse above real data, and it ranked a 6000-step run
+   above the 8000-step run that is visibly better. Every quality judgement in
+   this work ended up being made from waveform plots. A benchmark needs
+   morphology, power spectra, distributional distance, and a train-on-synthetic
+   / test-on-real classifier score.
+2. **Further TTS-GAN tuning has low expected value.** The window and capacity
+   ablation below explored the two remaining axes and gained about 25%; the
+   output is still visibly not an ECG.
