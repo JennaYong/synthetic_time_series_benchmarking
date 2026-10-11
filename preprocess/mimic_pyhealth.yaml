@@ -1,0 +1,69 @@
+# PyHealth table config for mimic_pyhealth.py.
+#
+# PyHealth's bundled mimic4_ehr.yaml has no chartevents table and drops the
+# prescriptions columns the antibiotic rules need, so this config declares only
+# the tables and attributes the TimeDiff preprocessing reads.  Row filtering
+# (vital/lab itemids, antibiotic rules) happens in the preprocess_<table> hooks
+# of TimeDiffMIMIC4Dataset, before the global event table is cached.
+version: "3.1"
+tables:
+  patients:
+    file_path: "hosp/patients.csv"
+    patient_id: "subject_id"
+    timestamp: null
+    attributes:
+      - "anchor_age"
+
+  admissions:
+    file_path: "hosp/admissions.csv"
+    patient_id: "subject_id"
+    timestamp: "admittime"
+    timestamp_format: "%Y-%m-%d %H:%M:%S"
+    attributes:
+      - "hadm_id"
+      - "hospital_expire_flag"
+
+  icustays:
+    file_path: "icu/icustays.csv"
+    patient_id: "subject_id"
+    timestamp: "intime"
+    timestamp_format: "%Y-%m-%d %H:%M:%S"
+    attributes:
+      - "hadm_id"
+      - "stay_id"
+      - "outtime"
+
+  diagnoses_icd:
+    file_path: "hosp/diagnoses_icd.csv"
+    patient_id: "subject_id"
+    timestamp: null
+    attributes:
+      - "hadm_id"
+      - "icd_code"
+
+  prescriptions:
+    file_path: "hosp/prescriptions.csv"
+    patient_id: "subject_id"
+    timestamp: null
+    attributes:
+      - "drug"
+
+  labevents:
+    file_path: "hosp/labevents.csv"
+    patient_id: "subject_id"
+    timestamp: "charttime"
+    timestamp_format: "%Y-%m-%d %H:%M:%S"
+    attributes:
+      - "specimen_id"
+      - "itemid"
+      - "valuenum"
+
+  chartevents:
+    file_path: "icu/chartevents.csv"
+    patient_id: "subject_id"
+    timestamp: "charttime"
+    timestamp_format: "%Y-%m-%d %H:%M:%S"
+    attributes:
+      - "stay_id"
+      - "itemid"
+      - "valuenum"
