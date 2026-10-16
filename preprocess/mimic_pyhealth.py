@@ -37,8 +37,9 @@ Pipeline:
 5. The samples are stacked into a `(16, 72)` layout and split ~75/25 by
    subject, with subjects stratified on mortality.
 6. With `forward_fill`, the slots before each channel's first reading are reset
-   from 0 to that channel's median over the measured train slots, and the
-   result is saved.
+   from 0 to that channel's median over the measured train slots.
+7. Every value channel is clipped to its physiological bounds (`CLIP_BOUNDS`),
+   and the result is saved.
 
 Outputs
 -------
@@ -57,7 +58,7 @@ i of `train.npy`, `stays_train.npy` and `subjects_train.npy` is the same stay
       idx  name                  content
       ---  --------------------  ------------------------------------------------
        0   heart_rate            beats/min
-       1   heart_rate_mask       1 = imputed, 0 = measured
+       1   heart_rate_mask       1 = measured, 0 = imputed
        2   sbp                   systolic blood pressure, mmHg (invasive or cuff)
        3   sbp_mask
        4   dbp                   diastolic blood pressure, mmHg
@@ -79,10 +80,12 @@ i of `train.npy`, `stays_train.npy` and `subjects_train.npy` is the same stay
   of a channel never measured in the window, hold the channel's median over the
   measured train slots (`channels.json["leading_fill"]`; computed on train only
   and applied to both splits).  With `--impute zero` every missing slot holds 0
-  instead.  The mask channel right after each value
-  channel (odd indices 1..15) tells the two apart, so real measurements are
-  ``values[mask == 0]``.  Labs are drawn a few times a day, so their masks are
-  mostly 1; vitals are mostly 0.
+  instead.  Every value channel is then clipped to its physiological bounds
+  (`CLIP_BOUNDS`, also in `channels.json["clip_bounds"]`); with `--impute zero`
+  only measured slots are clipped.  The mask channel right after each value
+  channel (odd indices 1..15) is 1 where the slot holds an actual measurement
+  and 0 where it was imputed, so evaluate on ``values[mask == 1]``.  Labs are
+  drawn a few times a day, so their masks are mostly 0; vitals are mostly 1.
 
 `stays_train.npy`, `stays_test.npy` -- int64, shape `(n_stays,)`: the MIMIC-IV
   `stay_id` of each row.
@@ -95,9 +98,10 @@ i of `train.npy`, `stays_train.npy` and `subjects_train.npy` is the same stay
 
 `channels.json` -- run metadata: `channels` (the 16 names above, in order),
   `n_train` / `n_test` (stays), `n_subjects_train` / `n_subjects_test`,
-  `n_steps`, `granularity`, `time_axis`, `split`, `imputation`,
+  `n_steps`, `granularity`, `time_axis`, `split`, `imputation`, `mask`,
   `leading_fill` (the per-signal value of the slots before the first reading,
-  null with `--impute zero`), `min_measurements_per_vital` and `dev`.
+  null with `--impute zero`), `clip_bounds`, `clipping`,
+  `min_measurements_per_vital` and `dev`.
 
 `annotations.json` -- per-stay labels that are NOT in the tensors, for
   conditioning or evaluation.  `stays` maps each stay_id (as a string) to a
@@ -123,7 +127,7 @@ Loading:
     meta = json.load(open(f"{out}/channels.json"))
     ann = json.load(open(f"{out}/annotations.json"))["stays"]
     hr, hr_mask = train[:, 0], train[:, 1]                # (n, 72) each
-    measured_hr = hr[hr_mask == 0]
+    measured_hr = hr[hr_mask == 1]
     mortality = np.array([ann[str(s)]["mortality"] for s in stays])
 
 Each run converts every listed CSV to Parquet under a PyHealth cache
@@ -180,6 +184,22 @@ LABS: tuple[str, ...] = tuple(LAB_ITEMS)
 # channel order of the saved tensor: value/mask per signal
 SIGNALS: tuple[str, ...] = VITALS + LABS
 
+# (low, high) physiological bounds the value channels are clipped to after
+# imputation.  Upper bounds and the spo2 / sodium lower bounds are ricu's
+# concept-dict.json min/max; where ricu's lower bound is 0, the adult
+# implausible-value screening bound is used instead.
+CLIP_BOUNDS: dict[str, tuple[float, float]] = {
+    "heart_rate": (20.0, 300.0),   # beats/min
+    "sbp": (40.0, 300.0),          # mmHg
+    "dbp": (20.0, 200.0),          # mmHg
+    "resp_rate": (4.0, 120.0),     # breaths/min
+    "spo2": (50.0, 100.0),         # %
+    "glucose": (10.0, 1000.0),     # mg/dL
+    "creatinine": (0.1, 15.0),     # mg/dL
+    "sodium": (110.0, 165.0),      # mEq/L
+}
+assert set(CLIP_BOUNDS) == set(SIGNALS)
+
 N_STEPS = 72  # hours kept per stay; also the width of the ICD/antibiotic vectors
 
 # drug-name and route rules of concepts/medication/antibiotic.sql
@@ -216,8 +236,6 @@ _EXCLUDED_ROUTES = frozenset({"OU", "OS", "OD", "AU", "AS", "AD", "TP"})
 
 DEFAULT_EHR_ROOT = Path("/path/to/physionet.org/files/mimiciv/3.1")
 DEFAULT_OUT_DIR = Path("/path/to/processed_mimic_pyhealth")
-DEFAULT_EHR_ROOT = Path("/Users/yenping/Desktop/physionet.org/files/mimiciv/3.1")
-DEFAULT_OUT_DIR = Path("/Users/yenping/Desktop/processed_mimic_pyhealth")
 
 CONFIG_PATH = Path(__file__).with_name("mimic_pyhealth.yaml")
 TABLES = [
@@ -371,7 +389,8 @@ class TimeDiffHourlyMIMIC4(BaseTask):
     """One sample per ICU stay: the 72-hour signal grid, its mask, age and mortality.
 
     ``signals`` goes through PyHealth's ``TimeseriesProcessor`` and comes out
-    imputed; ``mask`` is 1 where that slot had no measurement.  ``age`` is
+    imputed; ``mask`` is 1 where that slot was measured and 0 where it was
+    imputed.  ``age`` is
     ``patients.anchor_age`` (NaN when unknown) and ``mortality`` the
     ``hospital_expire_flag`` of the admission the stay belongs to.
     """
@@ -462,7 +481,7 @@ class TimeDiffHourlyMIMIC4(BaseTask):
                     "patient_id": patient.patient_id,
                     "stay_id": int(row["stay_id"]),
                     "signals": (hours, grid),
-                    "mask": np.isnan(grid).astype(np.float32),
+                    "mask": (~np.isnan(grid)).astype(np.float32),
                     # "icd": icd,
                     # "antibiotic": abx,
                     "age": age,
@@ -547,14 +566,41 @@ def fill_leading_with_median(parts: dict[str, np.ndarray]) -> dict[str, float]:
     medians: dict[str, float] = {}
     for k, name in enumerate(SIGNALS):
         value, mask = 2 * k, 2 * k + 1
-        measured = parts["train"][:, value][parts["train"][:, mask] == 0]
+        measured = parts["train"][:, value][parts["train"][:, mask] == 1]
         medians[name] = float(np.median(measured))
         for split in ("train", "test"):
             x = parts[split]
-            leading = np.cumsum(x[:, mask] == 0, axis=1) == 0
+            leading = np.cumsum(x[:, mask] == 1, axis=1) == 0
             x[:, value][leading] = medians[name]
         LOG.info("leading fill %-12s median %.2f", name, medians[name])
     return medians
+
+
+def clip_physiological(parts: dict[str, np.ndarray], impute_strategy: str) -> None:
+    """Clip each value channel to `CLIP_BOUNDS`, measured and imputed slots alike.
+
+    With ``zero`` imputation the imputed slots hold 0 as a placeholder rather
+    than a value, so only measured slots are clipped.  Edits `parts["train"]`
+    and `parts["test"]` in place.
+    """
+    for k, name in enumerate(SIGNALS):
+        low, high = CLIP_BOUNDS[name]
+        value, mask = 2 * k, 2 * k + 1
+        for split in ("train", "test"):
+            x = parts[split]
+            target = (
+                np.ones_like(x[:, mask], dtype=bool)
+                if impute_strategy == "forward_fill"
+                else x[:, mask] == 1
+            )
+            v = x[:, value]
+            out = target & ((v < low) | (v > high))
+            measured_out = out & (x[:, mask] == 1)
+            v[target] = np.clip(v[target], low, high)
+            LOG.info(
+                "clip %-5s %-12s [%g, %g]: %s slots (%s measured)",
+                split, name, low, high, f"{out.sum():,}", f"{measured_out.sum():,}",
+            )
 
 
 # every annotation emitted per stay, with the description written into the json
@@ -869,6 +915,7 @@ def preprocess(
     leading_fill = (
         fill_leading_with_median(parts) if impute_strategy == "forward_fill" else None
     )
+    clip_physiological(parts, impute_strategy)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
     for name, array in parts.items():
@@ -898,9 +945,20 @@ def preprocess(
                 "imputation": (
                     f"pyhealth TimeseriesProcessor impute_strategy={impute_strategy!r};"
                     " slots before a channel's first reading hold leading_fill[channel]"
-                    " (forward_fill only); mask channels are 1 where a value was imputed"
+                    " (forward_fill only)"
+                ),
+                "mask": (
+                    "each <signal>_mask channel is 1 where the slot holds an actual"
+                    " measurement and 0 where it was imputed; evaluate on values[mask == 1]"
                 ),
                 "leading_fill": leading_fill,
+                "clip_bounds": {
+                    name: {"low": low, "high": high} for name, (low, high) in CLIP_BOUNDS.items()
+                },
+                "clipping": (
+                    "value channels clipped to clip_bounds after imputation, measured and"
+                    " imputed slots alike (measured slots only with impute_strategy='zero')"
+                ),
                 "dev": dev,
                 # "icd_codes": top_icd,
                 # "antibiotics": top_abx,
