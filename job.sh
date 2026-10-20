@@ -18,7 +18,7 @@ set -euo pipefail
 usage() {
   echo "Usage: $(basename "$0") <model> [dataset]"
   echo "  model:   model name (sssd-ecg | tts-gan)"
-  echo "  dataset: optional dataset override (tts-gan: unimib | ptbxl; default unimib)"
+  echo "  dataset: optional dataset override (tts-gan: unimib | ptbxl | mimic; default unimib)"
   exit 1
 }
 
@@ -62,6 +62,14 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
       #   sbatch --time=<HH:MM:SS> --export=ALL,TTS_GAN_DATASET=ptbxl,... job.sh tts-gan
       if [[ "${TTS_GAN_DATASET:-unimib}" == "ptbxl" ]]; then
         TIME_LIMIT="03:00:00"
+      elif [[ "${TTS_GAN_DATASET:-unimib}" == "mimic" ]]; then
+        # Measured on nibi: MIMIC-IV with all eight signals at the recommended
+        # TTS_GAN_MAX_ITER=110000, plus generating 21860 samples, finished in
+        # 1:16:05, so 2h covers it with margin (a shorter limit also queues
+        # faster). A much larger TTS_GAN_MAX_ITER needs a --time override as
+        # above. Set TTS_GAN_MAX_ITER explicitly -- the 500000 default is the
+        # UniMiB one.
+        TIME_LIMIT="02:00:00"
       else
         TIME_LIMIT="10:00:00"
       fi

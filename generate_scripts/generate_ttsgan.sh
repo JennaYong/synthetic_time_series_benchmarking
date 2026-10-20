@@ -7,10 +7,15 @@ MODEL_BASE_DIR="${PROJECT_DIR}/model"
 # Configurable via environment variables at sbatch time, e.g.:
 #   TTS_GAN_CLASS=Jumping TTS_GAN_MAX_ITER=1000 sbatch job.sh tts-gan
 #   TTS_GAN_DATASET=ptbxl TTS_GAN_CLASS=MI ./job.sh tts-gan ptbxl
+#   TTS_GAN_MAX_ITER=110000 TTS_GAN_NUM_SAMPLES=21860 ./job.sh tts-gan mimic
 # Datasets:
 #   unimib (default) - original TTS-GAN motion data, classes e.g. Running/Jumping
 #   ptbxl            - PTB-XL 12-lead ECG, classes NORM/MI/STTC/CD/HYP
 #                      (superclass filtering; see preprocess/ttsgan/)
+#   mimic            - MIMIC-IV ICU stays, 72 hourly steps; classes all (default,
+#                      unconditional) / survived / died. Options are the
+#                      TTS_GAN_MIMIC_* variables documented in
+#                      preprocess/ttsgan/mimic_dataLoader.py
 DATASET="${TTS_GAN_DATASET:-unimib}"
 MAX_ITER="${TTS_GAN_MAX_ITER:-500000}"
 NUM_SAMPLES="${TTS_GAN_NUM_SAMPLES:-1000}"
@@ -63,8 +68,31 @@ case "${DATASET}" in
     TRAIN_ENTRY="train_ptbxl_GAN.py"
     OUTPUT_PREFIX="ttsgan_ptbxl_$(echo "${CLASS_NAME}" | tr '[:upper:]' '[:lower:]')"
     ;;
+  mimic)
+    CLASS_NAME="${TTS_GAN_CLASS:-all}"
+    case "${CLASS_NAME}" in
+      all|survived|died) ;;
+      *)
+        echo "Error: for mimic, TTS_GAN_CLASS must be one of all survived died (got ${CLASS_NAME})" >&2
+        exit 1
+        ;;
+    esac
+    # The defaults are fixed here and exported, so the training driver, the
+    # generation step and the output directory name below all read the same
+    # values instead of each carrying its own copy of the defaults.
+    export TTS_GAN_MIMIC_SIGNALS="${TTS_GAN_MIMIC_SIGNALS:-all}"
+    export TTS_GAN_MIMIC_ANCHOR="${TTS_GAN_MIMIC_ANCHOR:-none}"
+    export TTS_GAN_MIMIC_EMBED_DIM="${TTS_GAN_MIMIC_EMBED_DIM:-10}"
+    export TTS_GAN_MIMIC_PATCH_SIZE="${TTS_GAN_MIMIC_PATCH_SIZE:-8}"
+    export TTS_GAN_MIMIC_HEAD_FILL="${TTS_GAN_MIMIC_HEAD_FILL:-none}"
+    export TTS_GAN_MIMIC_WEIGHTS="${TTS_GAN_MIMIC_WEIGHTS:-ema}"
+    # Job id in the name for the same reason as ptbxl above.
+    EXP_NAME="mimic_${CLASS_NAME}${SLURM_JOB_ID:+_${SLURM_JOB_ID}}"
+    TRAIN_ENTRY="train_mimic_GAN.py"
+    OUTPUT_PREFIX="ttsgan_mimic_${CLASS_NAME}"
+    ;;
   *)
-    echo "Error: unknown TTS_GAN_DATASET '${DATASET}' (expected unimib or ptbxl)" >&2
+    echo "Error: unknown TTS_GAN_DATASET '${DATASET}' (expected unimib, ptbxl or mimic)" >&2
     exit 1
     ;;
 esac
@@ -85,6 +113,17 @@ if [[ "${DATASET}" == "ptbxl" ]]; then
   ptbxl_window="${TTS_GAN_PTBXL_WINDOW:-1000}"
   run_tag="${run_tag}_w${ptbxl_window}_e${TTS_GAN_PTBXL_EMBED_DIM:-40}"
   run_tag="${run_tag}_p${TTS_GAN_PTBXL_PATCH_SIZE:-$((ptbxl_window / 10))}"
+fi
+if [[ "${DATASET}" == "mimic" ]]; then
+  # A comma-separated signal list becomes a+b+c so the name stays one path part.
+  run_tag="${run_tag}_mimic_s${TTS_GAN_MIMIC_SIGNALS//,/+}_e${TTS_GAN_MIMIC_EMBED_DIM}"
+  run_tag="${run_tag}_p${TTS_GAN_MIMIC_PATCH_SIZE}_${TTS_GAN_MIMIC_ANCHOR}"
+  if [[ "${TTS_GAN_MIMIC_HEAD_FILL}" != "none" ]]; then
+    run_tag="${run_tag}_head${TTS_GAN_MIMIC_HEAD_FILL}"
+  fi
+  if [[ "${TTS_GAN_MIMIC_WEIGHTS}" != "ema" ]]; then
+    run_tag="${run_tag}_${TTS_GAN_MIMIC_WEIGHTS}weights"
+  fi
 fi
 if [[ -n "${LR_DECAY_FLAG}" ]]; then
   run_tag="${run_tag}_lrdecay"
@@ -121,6 +160,18 @@ if [[ "${DATASET}" == "unimib" ]]; then
     echo "  wget -O ${model_repo_dir}/UniMiB-SHAR.zip https://www.dropbox.com/s/raw/x2fpfqj0bpf8ep6/UniMiB-SHAR.zip" >&2
     exit 1
   fi
+elif [[ "${DATASET}" == "mimic" ]]; then
+  # mimic: tensors and adapter code are copied in by relocate_ttsgan_mimic.sh.
+  # test.npy is required too, for the reason given in the ptbxl branch below.
+  for f in mimic/train.npy mimic/test.npy mimic/stays_train.npy mimic/stays_test.npy \
+           mimic/channels.json mimic/annotations.json \
+           mimic_dataLoader.py train_mimic_GAN.py generate_mimic.py; do
+    if [[ ! -e "${model_repo_dir}/${f}" ]]; then
+      echo "Error: ${model_repo_dir}/${f} not found." >&2
+      echo "Run ./relocate_scripts/relocate_ttsgan_mimic.sh locally and re-sync." >&2
+      exit 1
+    fi
+  done
 else
   # ptbxl: npys and adapter code are copied in by relocate_ttsgan_ptbxl.sh.
   # All three splits are required: train_GAN.py builds the test set at startup
@@ -243,6 +294,21 @@ collect_synthesis_outputs() {
 
   echo "Generating ${NUM_SAMPLES} synthetic samples from ${latest_ckpt}"
   mkdir -p "${synthesis_dir}"
+
+  if [[ "${DATASET}" == "mimic" ]]; then
+    # MIMIC-IV has its own generation step: samples are mapped back to
+    # clinical units and checked against the training data, which needs the
+    # adapter's scaling. It rebuilds the generator through the same code as
+    # training, so the two cannot drift apart.
+    (
+      cd "${model_repo_dir}"
+      python3 generate_mimic.py "${latest_ckpt}" "${synthesis_dir}" "${CLASS_NAME}" \
+        "${NUM_SAMPLES}" "${OUTPUT_PREFIX}"
+    )
+    cp "${latest_ckpt}" "${synthesis_dir}/${EXP_NAME}_checkpoint"
+    echo "Saved synthetic TTS-GAN outputs to ${synthesis_dir}"
+    return
+  fi
 
   (
     cd "${model_repo_dir}"

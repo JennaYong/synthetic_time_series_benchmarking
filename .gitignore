@@ -2,6 +2,7 @@ model/
 synthesis/
 results/
 Dataset/
+processed_mimic_pyhealth/
 __pycache__/
 *.pyc
 .DS_Store
