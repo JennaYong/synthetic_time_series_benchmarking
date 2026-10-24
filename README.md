@@ -9,6 +9,8 @@ More datasets to come...
 ✅ TTS-GAN — works out of the box on UniMiB; PTB-XL needed four adaptations and
 has a training-length limit, see [TTS-GAN on PTB-XL](#tts-gan-on-ptb-xl);
 MIMIC-IV runs through its own adapter, see [TTS-GAN on MIMIC-IV](#tts-gan-on-mimic-iv) \
+✅ DoppelGANger — MIMIC-IV, through Gretel's PyTorch implementation, see
+[DoppelGANger on MIMIC-IV](#doppelganger-on-mimic-iv) \
 More models to come...
 ### Evaluation - Developing...
 
@@ -33,14 +35,18 @@ synthetic_time_series_benchmarking/
 |      |--mimic_dataLoader.py   # MIMIC-IV: signal selection, scaling, class filter
 |      |--train_mimic_GAN.py    # MIMIC-IV: training driver and output anchors
 |      |--generate_mimic.py     # MIMIC-IV: sampling back to clinical units + checks
+|   |--doppelganger/
+|      |--mimic_dgan.py         # MIMIC-IV: DoppelGANger training, sampling + checks
 |--generate_scripts/        # Model-specific training and generation scripts
 |   |--generate_sssdecg.sh
 |   |--generate_ttsgan.sh
+|   |--generate_doppelganger.sh
 |--relocate_scripts/        # Model-specific dataset relocation scripts
 |   |--relocate_sssdecg.sh
 |   |--relocate_ttsgan.sh         # UniMiB motion data
 |   |--relocate_ttsgan_ptbxl.sh   # PTB-XL ECG data
 |   |--relocate_ttsgan_mimic.sh   # MIMIC-IV ICU data
+|   |--relocate_doppelganger_mimic.sh   # MIMIC-IV ICU data for DoppelGANger
 |
 |--load_model.sh            # Download specified model to model/
 |--evaluate.sh              # Evaluation script
@@ -89,6 +95,8 @@ For TTS-GAN there are three relocate scripts, one per dataset:
 - `relocate_ttsgan_ptbxl.sh` — PTB-XL ECG data (copies the six `ptbxl_*.npy` files into `model/tts-gan/ptbxl/` and the adapter code from `preprocess/ttsgan/` into the model dir; re-run it after editing the adapters)
 - `relocate_ttsgan_mimic.sh` — MIMIC-IV ICU data (copies the output of `preprocess/mimic_pyhealth.py` into `model/tts-gan/mimic/` and the MIMIC adapter code into the model dir; re-run it after editing the adapters or regenerating the data). It reads `processed_mimic_pyhealth/` at the project root by default, or the directory named by `MIMIC_DATA_DIR`. That directory is gitignored: MIMIC-IV is credentialed data and must never be committed.
 
+For DoppelGANger, `relocate_doppelganger_mimic.sh` copies `train.npy` and `channels.json` of the same output into `model/doppelganger/mimic/` and the driver `preprocess/doppelganger/mimic_dgan.py` into `model/doppelganger/`, with the same `MIMIC_DATA_DIR` override.
+
 ### Step 4: Sync Local Setup with Remote Server
 To sync local setup with remote server, run
 ```
@@ -111,6 +119,7 @@ Per-model wall-time:
 | tts-gan  | unimib  | 10:00:00 | |
 | tts-gan  | ptbxl   | 03:00:00 | measured 1:53:48 at `TTS_GAN_MAX_ITER=100000` |
 | tts-gan  | mimic   | 02:00:00 | measured 1:16:05 at `TTS_GAN_MAX_ITER=110000` with 21,860 samples; set `TTS_GAN_MAX_ITER` explicitly |
+| doppelganger | mimic | 01:30:00 | measured: the default 400 epochs trained in 35 min (job 24897536) |
 
 **TTS-GAN + PTB-XL timing (measured on nibi, H100 MIG 20GB, batch 16):** ~14.6
 it/s, so 100k iterations take under 2 hours wall-clock; the allocated 3h leaves
@@ -122,7 +131,7 @@ roughly 35 minutes, so requesting less wall-time explicitly clears the queue fas
 
 To override the wall-time manually, submit explicitly: `sbatch --time=<HH:MM:SS> job.sh <model>`.
 
-`job.sh` handles job details and computing resource allocation, so double-check before submitting. For SSSD-ECG it runs `./generate_scripts/generate_sssdecg.sh`; for TTS-GAN, `./generate_scripts/generate_ttsgan.sh`. The generated synthesis is stored under `synthesis/<MODEL>/` (TTS-GAN directory naming is described below).
+`job.sh` handles job details and computing resource allocation, so double-check before submitting. For SSSD-ECG it runs `./generate_scripts/generate_sssdecg.sh`; for TTS-GAN, `./generate_scripts/generate_ttsgan.sh`; for DoppelGANger, `./generate_scripts/generate_doppelganger.sh`. The generated synthesis is stored under `synthesis/<MODEL>/` (TTS-GAN directory naming is described below).
 
 TTS-GAN trains one unconditional model per class; select dataset and class via arguments/environment variables:
 ```
@@ -796,3 +805,206 @@ above, not a failed run.
   the `survived` / `died` options remain for experiments.
 - Generating masks is not implemented; under the current rules masks are
   only used at evaluation, so none is needed.
+
+# DoppelGANger on MIMIC-IV
+
+DoppelGANger (Lin et al., *Using GANs for Sharing Networked Time Series Data*,
+IMC 2020) generates fixed-length multivariate time series, optionally with
+static attributes. The authors' release is TensorFlow 1.4 code that no longer
+installs on the cluster, so the benchmark runs Gretel's PyTorch
+implementation, `gretel_synthetics.timeseries_dgan`, which
+`./load_model.sh doppelganger` clones into `model/doppelganger/`. Its networks
+and losses follow the paper, with the paper's layer sizes:
+- an MLP generates the attributes, and an LSTM generates `sample_len` hours per
+  step;
+- two MLP discriminators, one on the whole series with its attributes and one
+  on the attributes alone, are trained with the Wasserstein loss and gradient
+  penalty.
+
+Only that package is imported, from source, so neither the rest of
+gretel-synthetics nor its pinned dependencies are installed, and upstream code
+is not edited. Gretel publishes it under its Source Available License, not an
+open-source licence.
+
+The driver `preprocess/doppelganger/mimic_dgan.py` follows the benchmark rules
+described under *TTS-GAN on MIMIC-IV*:
+- it trains on the eight value channels of the shared tensor, imputed slots
+  included and masks dropped;
+- it keeps the original objective;
+- it gets no conditional input, because DoppelGANger runs unconditionally here.
+  Its auto-normalization still adds each series' own minimum and maximum as
+  attributes, which the model generates before the series.
+
+The only change to the data is the one the TTS-GAN adapter makes: glucose and
+creatinine are modelled on a log scale (`DGAN_MIMIC_LOG`). Samples are mapped
+back to clinical units and clipped to `clip_bounds`.
+
+## Running it
+
+```
+./load_model.sh doppelganger                       # locally, once
+MIMIC_DATA_DIR=<preprocessed dir> ./relocate_scripts/relocate_doppelganger_mimic.sh
+./sync.sh local-to-remote <destination>
+./job.sh doppelganger                              # on the cluster
+```
+
+The job installs `torch` and `category_encoders` offline from the Alliance
+wheelhouse into `~/venv/doppelganger`. On nibi the wheelhouse has
+`category_encoders` 2.8.0. On a cluster where `avail_wheels category_encoders`
+finds nothing, install it once from a login node, with the modules `job.sh`
+loads:
+
+```
+module load StdEnv/2023 python/3.11 scipy-stack
+virtualenv --no-download ~/venv/doppelganger && source ~/venv/doppelganger/bin/activate
+pip install category_encoders
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DGAN_EPOCHS` | 400 | Training epochs, the paper's value. One epoch is 219 batches. |
+| `DGAN_BATCH_SIZE` | 100 | The paper's batch size. |
+| `DGAN_LR` | 0.0001 | Learning rate of the generator and both discriminators. The paper's 0.001 never settles here, see below. |
+| `DGAN_SAMPLE_LEN` | 6 | Hours generated per LSTM step; must divide 72. |
+| `DGAN_EXAMPLE_SCALING` | 1 | DoppelGANger's auto-normalization; 0 scales every series globally instead. |
+| `DGAN_MIMIC_LOG` | 1 | Log scale for glucose and creatinine. |
+| `DGAN_NUM_SAMPLES` | the number of training stays (21,860) | Samples to generate. |
+| `DGAN_SEED` | 0 | Random seed. |
+
+Outputs land in
+`synthesis/DoppelGANger/<date>_ep<epochs>_mimic_b<batch>_s<sample_len>[_nolog][_lr<lr>][_noexscale]_<job id>/`:
+
+- `doppelganger_mimic_all_samples.npy` — float32 `(N, 8, 72)` in clinical
+  units, the benchmark's delivery format.
+- `doppelganger_mimic_all_config.json` — the configuration, the upstream
+  commit, the transform and the health check. The checks are TTS-GAN's, plus a
+  warning for series that are flat within a stay.
+- `doppelganger_mimic_all_model.pt` — the trained model, loaded with
+  `DGAN.load(path, weights_only=False)`.
+
+## Results
+
+Release V3, all eight signals, 400 epochs, one run per setting, trained
+locally on CPU. The measures are those of *Results with all eight signals*:
+4000 samples per column, with level spread and roughness on the model's scale.
+TTS-GAN's benchmark run is listed for comparison.
+
+| | Test split | **lr 1e-4** | lr 1e-4, no auto-normalization | lr 1e-3 (paper) | lr 1e-3, batch 1024 | lr 1e-3, sample_len 3 | lr 1e-3, no log | lr 1e-3, no auto-normalization | TTS-GAN (nibi) |
+|---|---|---|---|---|---|---|---|---|---|
+| Hourly values, W1 / real std: vitals | 0.009 | **0.142** | 0.234 | 0.618 | 1.187 | 0.893 | 0.692 | 0.852 | 0.150 |
+| ... labs | 0.019 | **0.136** | 0.300 | 0.969 | 1.516 | 0.604 | 0.775 | 0.840 | 0.279 |
+| Autocorrelation error: vitals | 0.002 | **0.028** | 0.279 | 0.074 | 0.252 | 0.092 | 0.076 | 0.292 | 0.073 |
+| ... labs | 0.012 | **0.017** | 0.461 | 0.042 | 0.444 | 0.059 | 0.068 | 0.565 | 0.281 |
+| Cross-signal correlation error | 0.007 | 0.134 | 0.114 | 0.175 | 0.345 | 0.327 | 0.129 | 0.156 | **0.035** |
+| Level spread, synthetic / real: vitals | 0.98 - 1.00 | 1.02 - 1.34 | 0.38 - 1.00 | 0.28 - 0.95 | 0.50 - 2.15 | 0.13 - 0.94 | 0.35 - 1.17 | 0.05 - 0.12 | 0.71 - 0.98 |
+| ... labs | 1.00 - 1.01 | 0.95 - 1.05 | 0.53 - 0.90 | 0.63 - 0.93 | 0.23 - 0.96 | 0.28 - 0.60 | 0.45 - 0.74 | 0.01 - 0.06 | 0.34 - 0.55 |
+| Roughness, synthetic / real: labs | 1.0 | 0.0 - 1.3 | 4.6 - 5.3 | 1.4 - 3.6 | 0.0 - 6.8 | 1.3 - 2.9 | 1.2 - 3.0 | 5.4 - 10.0 | 2.0 - 5.3 |
+| 99th percentile, synthetic / real: glucose, creatinine | 0.99, 1.01 | 0.64, 1.14 | 1.02, 0.94 | 1.25, 0.52 | 0.33, 0.30 | 0.63, 0.27 | 0.87, 0.34 | 2.00, 0.92 | 0.65, 0.26 |
+
+The chosen setting against TTS-GAN's benchmark run, with the full evaluation
+(14,000 samples, as in the TTS-GAN tables). The DoppelGANger benchmark run is
+the second one on nibi, described below:
+
+| | Real test split | **DoppelGANger, nibi (benchmark run)** | DoppelGANger, local | TTS-GAN (nibi) |
+|---|---|---|---|---|
+| Real-vs-synthetic accuracy (0.5 = indistinguishable) | 0.50 | 0.995 | 0.995 | 0.989 |
+| ... on 6-hour means only | | 0.991 | 0.993 | 0.955 |
+| Next-hour forecast error, trained on synthetic (TSTR) | 0.277 (trained on real) | **0.291** | 0.292 | 0.325 |
+| Autocorrelation error, lags 1 - 48 h | 0.005 | 0.036 | **0.019** | 0.123 |
+| Cross-signal correlation error: all values | 0.007 | 0.079 | 0.137 | **0.035** |
+| ... within stays | 0.003 | 0.021 | **0.019** | 0.029 |
+| ... between stays (stay means) | 0.011 | 0.132 | 0.214 | **0.059** |
+| Share of real test stays whose nearest neighbour is synthetic (0.50 = full coverage) | | 0.10 | 0.17 | 0.11 |
+
+Predicting that the next hour equals the current one scores 0.302 - 0.303.
+
+What these show:
+
+- **The paper's learning rate never settles on this data.** At 0.001 the
+  scores swing from one snapshot to the next and the levels stay wrong:
+  glucose sits at 200 - 400 mg/dL and SpO2 piles up at 100. At 0.0001, the
+  value Gretel's own example uses, every measure improves steadily through
+  epoch 400.
+- **Auto-normalization is where DoppelGANger's temporal fidelity comes from.**
+  Without it the labs are 4 - 5 times too rough, as with TTS-GAN. With it the
+  within-stay autocorrelation is almost exact for every signal, labs included.
+- **Against TTS-GAN it is better on almost everything about single signals**:
+  - the marginals (lab W1 0.14 against 0.28);
+  - creatinine's tail (99th percentile 9 against 2 mg/dL; real 8);
+  - how much each stay varies;
+  - the autocorrelation;
+  - forecasting: TSTR 0.292 is better than persistence (0.303), which TTS-GAN's
+    0.325 is not.
+- **It is worse on how the signals combine across stays.** The stay means of
+  different signals pick up correlations the real data do not have
+  (heart rate with sodium: -0.50 against a real -0.05). This is why a
+  classifier on 6-hour means still tells real from synthetic with 0.99
+  accuracy.
+- **In every run, one lab collapses to flat lines.** The chosen setting was
+  trained three times: seeds 0 and 1 with the log scale, and seed 0 without
+  it. In each run exactly one lab came out constant within every synthetic
+  stay: glucose twice, sodium once. Its level distribution stays right.
+  - Real stays almost never have a constant lab (under 1%), so this is not in
+    the data. The generated within-stay range of that one lab gets stuck at
+    zero, and the seed decides which lab it hits.
+  - The other seven signals keep their real within-stay variation (0.9 - 1.2
+    times the real one), and the two extra runs score like the first on the
+    other measures (correlation error 0.09 - 0.10).
+  - The health check warns about it.
+- Gretel's default batch of 1024 gives ten times fewer updates per epoch and
+  fails. `sample_len` 3 was no better than 6, and modelling the labs in raw
+  units no better than on the log scale (both at lr 0.001).
+- There is no sign of memorization: synthetic stays are no closer to real
+  training stays than real test stays are.
+- **On nibi, the vitals were off until the discriminator step ran in
+  float32.**
+  - The first run (job 24892830, 45 min) put heart rate 14 bpm too high, and
+    its vitals' W1 was 0.45, against 0.14 - 0.21 in the three local runs. Its
+    temporal structure and TSTR (0.300) were as good as theirs.
+  - Gretel runs the feature-discriminator step under CUDA autocast even with
+    mixed precision off. On the GPU that step ran in float16 without loss
+    scaling, while the local CPU runs were full precision. The driver now keeps
+    the step in float32 on both devices (see *Open points*).
+  - The rerun with that fix (job 24897536) is the benchmark result. Its
+    vitals' W1 is 0.23 and heart rate averages 89 bpm (real: 86). Its lab W1
+    is 0.19, and its correlation error (0.078) and TSTR (0.291) are the best of
+    all DoppelGANger runs. Its glucose is flat, as in every run.
+  - It also trained faster, in 35 min instead of 45. With layers this small,
+    float16 saves no arithmetic, and autocast's conversions only add GPU
+    operations.
+
+**Recommended: the defaults**: lr 0.0001, batch 100, `sample_len` 6,
+auto-normalization, labs on the log scale, 400 epochs.
+
+## How it was verified
+
+- One epoch was run through the cluster's code path (`model/doppelganger/`,
+  `PYTHONPATH=src`), checking the output shape, the clipping and the config
+  file.
+- `job.sh` submission arguments were checked with a stub `sbatch`: for
+  `doppelganger` they are as intended, and for `tts-gan` (unimib 10 h, ptbxl
+  3 h, mimic 2 h) and `sssd-ecg` they are unchanged.
+- The settings above were compared locally on CPU (6 - 8 s per epoch with three
+  runs in parallel).
+- The chosen setting ran on nibi twice: job 24892830 before the float32 fix
+  described under *Open points*, and job 24897536 after it, which is the
+  benchmark result.
+- The run configuration records the gretel-synthetics commit:
+  `relocate_doppelganger_mimic.sh` writes it to `model/doppelganger/UPSTREAM_COMMIT`,
+  because `sync.sh` does not ship `.git`.
+
+## Open points
+
+- **One lab flat within stays in every run** (glucose or sodium, depending on
+  the seed), see *Results*. Possible remedies, untested: the
+  `MINUSONE_ONE` normalization or a larger `attribute_loss_coef`, both
+  DGANConfig settings.
+- **Spurious correlations between the stay means** of different signals.
+- **Gretel's feature-discriminator step forces CUDA autocast**
+  (`torch.cuda.amp.autocast(enabled=True)` in `DGAN._train`) while its
+  GradScaler follows `mixed_precision_training` and is off. On a GPU that step
+  therefore runs in float16 without loss scaling; on a CPU autocast does
+  nothing. The driver turns autocast off while mixed precision is off, at
+  runtime and without editing upstream code, so both devices train in float32.
+  The rerun on nibi with the fix (job 24897536) closed most of the gap of the
+  first run, see *Results*.
