@@ -17,8 +17,9 @@ set -euo pipefail
 
 usage() {
   echo "Usage: $(basename "$0") <model> [dataset]"
-  echo "  model:   model name (sssd-ecg | tts-gan)"
-  echo "  dataset: optional dataset override (tts-gan: unimib | ptbxl | mimic; default unimib)"
+  echo "  model:   model name (sssd-ecg | tts-gan | doppelganger)"
+  echo "  dataset: optional dataset override (tts-gan: unimib | ptbxl | mimic; default unimib;"
+  echo "           doppelganger: mimic, its only dataset)"
   exit 1
 }
 
@@ -34,11 +35,21 @@ DATASET="${2:-}"
 # it, so both `TTS_GAN_DATASET=ptbxl ./job.sh tts-gan` and
 # `./job.sh tts-gan ptbxl` work.
 if [[ -n "${DATASET}" ]]; then
-  if [[ "${MODEL}" != "tts-gan" ]]; then
-    echo "Error: ${MODEL} takes no dataset argument (got '${DATASET}')" >&2
-    usage
-  fi
-  export TTS_GAN_DATASET="${DATASET}"
+  case "${MODEL}" in
+    tts-gan)
+      export TTS_GAN_DATASET="${DATASET}"
+      ;;
+    doppelganger)
+      if [[ "${DATASET}" != "mimic" ]]; then
+        echo "Error: doppelganger runs on mimic only (got '${DATASET}')" >&2
+        usage
+      fi
+      ;;
+    *)
+      echo "Error: ${MODEL} takes no dataset argument (got '${DATASET}')" >&2
+      usage
+      ;;
+  esac
 fi
 
 # Per-model wall-time. SBATCH headers are static (parsed before the script
@@ -74,6 +85,13 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
         TIME_LIMIT="10:00:00"
       fi
       ;;
+    doppelganger)
+      # Measured on nibi: the default 400 epochs at batch 100 trained in 35 min
+      # (job 24897536; 45 min before the float32 fix in mimic_dgan.py).
+      # Installing packages and generating 21860 samples add a few minutes, so
+      # 1.5h leaves margin. Raise it with --time for longer runs.
+      TIME_LIMIT="01:30:00"
+      ;;
     *)
       echo "Unknown model: ${MODEL}" >&2
       usage
@@ -84,6 +102,8 @@ if [[ -z "${SLURM_JOB_ID:-}" ]]; then
   JOB_NAME="${MODEL}"
   if [[ "${MODEL}" == "tts-gan" ]]; then
     JOB_NAME="${JOB_NAME}_${TTS_GAN_DATASET:-unimib}${TTS_GAN_CLASS:+_${TTS_GAN_CLASS}}"
+  elif [[ "${MODEL}" == "doppelganger" ]]; then
+    JOB_NAME="${JOB_NAME}_mimic"
   fi
 
   echo "Submitting ${JOB_NAME} with --time=${TIME_LIMIT}"
@@ -127,6 +147,9 @@ case "${MODEL}" in
     ;;
   tts-gan)
     ./generate_scripts/generate_ttsgan.sh
+    ;;
+  doppelganger)
+    ./generate_scripts/generate_doppelganger.sh
     ;;
   *)
     echo "Unknown model: ${MODEL}" >&2
