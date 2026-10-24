@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: $(basename "$0") <model>"
-  echo "Available models: sssd-ecg, tts-gan"
+  echo "Available models: sssd-ecg, tts-gan, doppelganger"
   exit 1
 }
 
@@ -23,6 +23,13 @@ case "${MODEL}" in
   tts-gan)
     MODEL_DIR="${MODEL_BASE_DIR}/tts-gan"
     MODEL_REPO="https://github.com/imics-lab/tts-gan.git"
+    ;;
+  doppelganger)
+    # Gretel's PyTorch implementation of DoppelGANger (Lin et al., IMC 2020);
+    # the authors' release is TensorFlow 1.4 code that no longer installs on
+    # current clusters. Only src/gretel_synthetics/timeseries_dgan is used.
+    MODEL_DIR="${MODEL_BASE_DIR}/doppelganger"
+    MODEL_REPO="https://github.com/gretelai/gretel-synthetics.git"
     ;;
   *)
     echo "Unknown model: ${MODEL}" >&2
